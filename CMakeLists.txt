@@ -35,6 +35,10 @@ endforeach()
 add_executable(load_two tests/two_models/load_two.cc)
 target_link_libraries(load_two PRIVATE vcix_accel ${CMAKE_DL_LIBS})
 
+# tests/probe: tables the probe must refuse, or take with members left NULL.
+vcix_accel_add_model(other_abi tests/probe/other_abi.cc)
+vcix_accel_add_model(no_configure tests/probe/no_configure.cc)
+
 add_executable(timing_probe tools/timing_probe.cc)
 target_link_libraries(timing_probe PRIVATE vcix_accel ${CMAKE_DL_LIBS})
 
