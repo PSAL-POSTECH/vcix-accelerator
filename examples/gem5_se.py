@@ -1,6 +1,9 @@
 # Test fixture for the examples, not a machine description: gem5's default MinorCPU
 # pool plus one accelerator unit. Usage: gem5.opt gem5_se.py --model M.so BINARY
+# gem5 exits with the program's exit code, and non-zero if the simulation ended
+# for any reason other than the program exiting.
 import argparse
+import sys
 
 import yaml
 
@@ -12,6 +15,7 @@ parser.add_argument("binary")
 parser.add_argument("--model", required=True)
 parser.add_argument("--config", help="machine description (YAML) the model is configured from")
 parser.add_argument("--vlen", type=int, default=256)
+parser.add_argument("--max-ticks", type=int, help="stop the simulation after this many ticks")
 args = parser.parse_args()
 
 
@@ -55,5 +59,14 @@ system.cpu.createThreads()
 
 root = Root(full_system=False, system=system)
 m5.instantiate()
-event = m5.simulate()
+event = m5.simulate(*([args.max_ticks] if args.max_ticks is not None else []))
 print(f"exit: {event.getCause()} at cycle {m5.curTick() // 1000}")
+
+# The cause gem5 gives when the last thread of an SE workload calls exit:
+# exitImpl() in src/sim/syscall_emul.cc. Its code is then the program's.
+PROGRAM_EXITED = "exiting with last active thread context"
+if event.getCause() != PROGRAM_EXITED:
+    # gem5's main() takes the exit status as an integer; a message would abort it.
+    print(f"gem5_se.py: the simulation did not end with the program exiting: {event.getCause()}", file=sys.stderr)
+    sys.exit(1)
+sys.exit(event.getCode())
