@@ -14,7 +14,8 @@ extern "C" {
 
 typedef uint64_t vcix_cycle_t;
 
-/* An instruction belongs to the model when (bits & mask) == match. */
+/* An instruction belongs to the model when (bits & mask) == match. `name` is
+ * what a disassembler prints for it; it is never NULL. */
 typedef struct vcix_encoding {
   uint32_t match;
   uint32_t mask;
@@ -56,7 +57,9 @@ typedef struct vcix_pending {
  *     or when its value is a mapping or a sequence. What is null is decided by
  *     the YAML library's resolver, never by comparing text: "" in quotes is a
  *     string, so that key is present and its text is empty.
- */
+ *
+ * The config and every string get returns belong to the adapter and are valid
+ * only until configure returns; the model copies what it keeps. */
 typedef struct vcix_config {
   void *ctx;
   const char *(*get)(void *ctx, const char *key);
@@ -78,6 +81,22 @@ typedef struct vcix_host {
   void (*mem_write)(void *ctx, uint64_t addr, const void *src, size_t bytes);
 } vcix_host;
 
+/* The table a model library hands over. vcix_accel_model() returns the same
+ * table on every call. The table, `name`, `encodings` and each encoding's
+ * `name` stay valid and unchanged for as long as the library is loaded, so a
+ * simulator may keep the pointers and need not copy the strings.
+ *
+ * A caller reads abi_version first, and when it is not VCIX_ACCEL_ABI_VERSION
+ * reads nothing else: the layout below is this version's only.
+ *
+ * Which members may be NULL is said here and nowhere else:
+ *   - `configure` and `reset` may be NULL, meaning the model has nothing to do
+ *     there. A caller checks each of the two before calling it.
+ *   - `encodings` may be NULL only when num_encodings is 0.
+ *   - `self` is the model's own and is passed back as it is, NULL or not.
+ *   - `name`, `execute`, `can_accept`, `latency` and `commit` are never NULL.
+ *     A model has both faces, because one library is loaded by both
+ *     simulators. */
 typedef struct vcix_model {
   uint32_t abi_version;
   const char *name;
@@ -86,8 +105,11 @@ typedef struct vcix_model {
   const vcix_encoding *encodings;
   size_t num_encodings;
 
-  /* Called once by either simulator, after loading and before anything else.
-   * The config is valid only during the call. */
+  /* Called once by either simulator, after loading and before any other
+   * function of this table. `name` and `encodings` are read before it: they
+   * are fixed when vcix_accel_model() returns, so a model's name and the
+   * instructions it owns cannot depend on the machine description.
+   * The config is valid only during the call. May be NULL. */
   void (*configure)(void *self, const vcix_config *config);
 
   /* Functional face. Called by the functional simulator only. */
@@ -109,6 +131,8 @@ typedef struct vcix_model {
                           size_t num_pending);
   void (*commit)(void *self, const vcix_insn *insn, vcix_cycle_t now);
 
+  /* Back to the state the model was in when configure returned; what configure
+   * read stays. May be called any number of times. May be NULL. */
   void (*reset)(void *self);
 } vcix_model;
 

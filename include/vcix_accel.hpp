@@ -100,6 +100,10 @@ class Host {
   const vcix_host *h_;
 };
 
+// name() and owns() are asked once, when the library is loaded and before
+// configure, so neither can depend on the machine description. The strings they
+// hand out (the name, each Encoding's name) must live as long as the library:
+// string literals do. configure and reset need not be overridden.
 class Model {
  public:
   virtual ~Model() = default;

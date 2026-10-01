@@ -77,18 +77,26 @@ into one `.so`. It needs neither simulator's source tree.
 |---|---|---|
 | `name()` | both | the model's name |
 | `owns()` | both | the `{match, mask}` encodings that belong to this model |
-| `configure(config)` | both | nothing; read the machine's numbers by key (optional) |
+| `configure(config)` | both | nothing; read the machine's numbers by key (need not be overridden) |
 | `execute(host, insn)` | Spike | what the instruction does to registers and memory, through `host` |
 | `can_accept(insn, now, pending)` | gem5 | whether the unit can start this instruction in this cycle; must not change state |
 | `latency(insn, now, pending)` | gem5 | cycles until the result is ready; must not change state |
 | `commit(insn, now)` | gem5 | nothing; this is where the timing state changes, once per instruction that really ran |
-| `reset()` | both | return to the initial state (optional) |
+| `reset()` | both | return to the state right after `configure` (need not be overridden) |
 
 `insn` is the instruction bits together with the vector configuration it was
 decoded under: `vl`, SEW and LMUL. Both faces receive the same thing, so
 latency can depend on how much data the instruction moves.
 
-`configure` is called once, before anything else. `config.get("key")` returns
+`configure` is called once, before any instruction reaches the model, but not
+before `name()` and `owns()`: those are asked when the library is loaded, and
+their answers are kept. A model's name and the encodings it owns therefore
+cannot depend on the machine description. The name, and the name in each
+encoding, must stay valid as long as the library is loaded; string literals do.
+What `config.get` returns is valid only until `configure` returns, so a model
+copies what it wants to keep.
+
+`config.get("key")` returns
 the value of a top-level key of the machine description, as written there, or
 nothing if the key is absent. "As written" is the scalar's text with no typing
 applied: `010` arrives as the text `010`. "Absent" covers a key the file does
@@ -182,7 +190,10 @@ fixture for running the examples: gem5's default pool plus the one unit.
 - **The boundary is a C ABI.** Spike does not install its headers, and a model
   that subclasses simulator types would have to be built against both simulator
   source trees. A plain C boundary keeps the model independent of both, and
-  leaves room for models written in other languages.
+  leaves room for models written in other languages. `include/vcix_accel.h` is
+  the contract for such a model and for an adapter: which members of the table
+  may be NULL, how long each string lives, and what the machine description
+  hands over are stated there and nowhere else.
 
 ## Non-goals
 
