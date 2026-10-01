@@ -55,3 +55,30 @@ gem5_run() {
   [ -n "$3" ] && description=(--config "$3")
   "$GEM5" -d "$1" "$REPO/examples/gem5_se.py" --model "$2" "${description[@]}" "$4"
 }
+
+# How each simulator says that a run ended as an illegal instruction. The exit
+# code cannot say it: a segfault exits non-zero as well. Each takes the run's
+# log and, optionally, the instruction that must have been the illegal one, as
+# 8 hex digits.
+
+# spike_illegal <log> [insn]
+# The message is pk's: pk/handlers.c handle_illegal_instruction() calls
+# dump_tf(), whose last line is "pc %lx va/inst %lx sr %lx" with the
+# instruction's bits in the middle, then panic("An illegal instruction was
+# executed!").
+spike_illegal() {
+  local insn=${2:-'[0-9a-f]{8}'}
+  grep -Fxq 'An illegal instruction was executed!' "$1" &&
+    grep -Eq "^pc [0-9a-f]+ va/inst 0*$insn sr [0-9a-f]+\$" "$1"
+}
+
+# gem5_illegal <log> [insn]
+# The message is the gem5 branch's: src/cpu/minor/execute.cc gives an
+# instruction no model owns IllegalInstFault("no VCIX accelerator model owns
+# it"), and src/arch/riscv/faults.cc IllegalInstFault::invokeSE() panics with
+# "Illegal instruction 0x%08x at pc %s: %s". What it prints is the extended
+# machine instruction; the instruction's bits are its low 32.
+gem5_illegal() {
+  local insn=${2:-'[0-9a-f]{8}'}
+  grep -Eq "panic: Illegal instruction 0x[0-9a-f]*$insn at pc .*: no VCIX accelerator model owns it\$" "$1"
+}
