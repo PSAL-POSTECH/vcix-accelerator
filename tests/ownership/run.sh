@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 # An instruction the model does not own must end as an illegal instruction on both
 # simulators with no call to the model; an owned one is executed/committed exactly once.
-# Usage: tests/ownership/run.sh <build-dir> <spike> <pk> <gem5.opt>
+# Usage: tests/ownership/run.sh [build-dir [spike [pk [gem5.opt]]]]
+# Each defaults to what setup/setup.sh produced; see scripts/sim.sh.
 set -uo pipefail
-BUILD=$(realpath "$1"); SPIKE=$2; PK=$3; GEM5=$4
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+source "$HERE/../../scripts/sim.sh"
 MODEL="$BUILD/libowns_one.so"
 OWNED_INSN=062541db
 failed=0
 
 for prog in owned unowned; do
-  clang --target=riscv64 -march=rv64gcv_xsfvcp -c "$HERE/$prog.S" -o "$BUILD/$prog.o"
-  riscv64-unknown-elf-gcc -static "$BUILD/$prog.o" -o "$BUILD/$prog"
+  rv_program "$HERE/$prog.S" "$BUILD/$prog" || exit 2
 done
 
 # check <label> <log> <exit-code> <want-ok: 0|1> <entry the simulator calls once per instruction>
@@ -30,12 +30,10 @@ check() {
 for prog in owned unowned; do
   want=1; [ "$prog" = unowned ] && want=0
 
-  VCIX_ACCEL_MODEL="$MODEL" "$SPIKE" --extlib="$BUILD/libvcix_spike.so" \
-    --isa=rv64gcv_zfh_xvcixaccel --varch=vlen:256,elen:64 "$PK" "$BUILD/$prog" > "$BUILD/$prog.spike.log" 2>&1
+  spike_run "$MODEL" "" "$BUILD/$prog" > "$BUILD/$prog.spike.log" 2>&1
   check "spike $prog" "$BUILD/$prog.spike.log" $? $want execute
 
-  "$GEM5" -d "$BUILD/m5out-$prog" "$HERE/../../examples/gem5_se.py" --model "$MODEL" "$BUILD/$prog" \
-    > "$BUILD/$prog.gem5.log" 2>&1
+  gem5_run "$BUILD/m5out-$prog" "$MODEL" "" "$BUILD/$prog" > "$BUILD/$prog.gem5.log" 2>&1
   check "gem5  $prog" "$BUILD/$prog.gem5.log" $? $want commit
 done
 
