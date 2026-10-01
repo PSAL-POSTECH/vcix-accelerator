@@ -217,6 +217,7 @@ tests/run.sh              every test below, on both simulators
 tests/ownership/          an unowned instruction is illegal on both simulators
 tests/pipeline/           a pipelined model overlaps instructions on gem5
 tests/two_models/         two model libraries in one process do not share a table
+tests/probe/              the probe checks the table and its own arguments
 tests/print_args/         the example reaches the model once per instruction
 tests/config/             both simulators hand a model the same machine description
 tests/harness/            the run scripts themselves: a build that fails, fails
