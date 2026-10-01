@@ -22,7 +22,9 @@ for needed in "$BUILD/libvcix_spike.so" "$SPIKE" "$PK" "$GEM5"; do
   echo "$needed: not found -- run setup/setup.sh, or pass [build-dir [spike [pk [gem5.opt]]]]" >&2
   exit 2
 done
-BUILD="$(realpath "$BUILD")"
+# The exit is spelled out: a caller without `set -e` would otherwise go on with
+# an empty BUILD and write to /.
+BUILD="$(cd "$BUILD" && pwd)" || { echo "$BUILD: cannot resolve the build directory" >&2; exit 2; }
 
 # The toolchain the setup unpacked, when there is one; otherwise clang and
 # riscv64-unknown-elf-gcc come from the caller's PATH.
@@ -30,9 +32,13 @@ BUILD="$(realpath "$BUILD")"
 
 # rv_program <source.S> <elf>
 # clang assembles the sf.vc.* mnemonics; the GNU assembler does not know them.
+# Fails when either step fails, whether or not the caller runs under `set -e`,
+# and removes what an earlier run left first: after a failure there is no ELF,
+# so a caller that goes on anyway cannot run a program it did not just build.
 rv_program() {
-  clang --target=riscv64 -march=rv64gcv_xsfvcp -c "$1" -o "$2.o"
-  riscv64-unknown-elf-gcc -static "$2.o" -o "$2"
+  rm -f "$2" "$2.o" || return
+  clang --target=riscv64 -march=rv64gcv_xsfvcp -c "$1" -o "$2.o" || return
+  riscv64-unknown-elf-gcc -static "$2.o" -o "$2" || return
 }
 
 # spike_run <model.so> <machine.yml, or ""> <elf>

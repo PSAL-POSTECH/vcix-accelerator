@@ -11,7 +11,7 @@ OWNED_INSN=062541db
 failed=0
 
 for prog in owned unowned; do
-  rv_program "$HERE/$prog.S" "$BUILD/$prog" || exit 2
+  rv_program "$HERE/$prog.S" "$BUILD/$prog" || { echo "FAIL  $prog.S does not build"; exit 2; }
 done
 
 # check <label> <log> <exit-code> <want-ok: 0|1> <entry the simulator calls once per instruction>
