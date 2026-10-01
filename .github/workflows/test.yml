@@ -1,0 +1,66 @@
+name: test
+
+# Build this repository in the environment image and run every test on both
+# simulators.
+#
+# The image comes from image.yml, called rather than named: it is the image this
+# commit's setup/ describes, built first if nobody has published it yet. What is
+# tested is the checkout -- the image holds the toolchain, pk, Spike and gem5,
+# and nothing of this repository.
+#
+# Pull requests, and pushes to main. A push to a branch with an open pull
+# request is covered by the pull request run and does not start a second one.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# One run per branch; a newer commit supersedes an older run instead of queueing
+# behind it on the shared runners.
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  image:
+    uses: ./.github/workflows/image.yml
+    permissions:
+      contents: read
+      packages: write
+
+  test:
+    needs: image
+    runs-on: [self-hosted, slurm, x86_64]
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: read
+    container:
+      image: ${{ needs.image.outputs.image }}
+      credentials:
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # The models, the probe, and the Spike adapter against the image's Spike.
+      - name: Build
+        run: scripts/build.sh
+
+      # One entry point: tests/run.sh runs each test on Spike and on gem5,
+      # prints one PASS/FAIL per case, and fails if any case does.
+      - name: Test on Spike and gem5
+        run: tests/run.sh
+
+      # The simulators' own output, when a case fails. Never fatal: losing the
+      # upload is not losing the result.
+      - if: failure()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: simulator-logs
+          path: build/*.log
+          retention-days: 7

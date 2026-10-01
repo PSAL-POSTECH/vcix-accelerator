@@ -1,0 +1,92 @@
+name: image
+
+# Publish the environment image to GHCR -- when it is not there already.
+#
+# The image is named by the contents of setup/ (setup/image.sh: the tag is that
+# directory's git tree hash), so a commit that touches neither the pin file, the
+# Dockerfile nor the scripts it runs asks for an image that already exists, and
+# nothing is built. A commit that does touch them asks for a tag nobody has
+# published, and this builds it: gem5 and Spike from source, about half an hour
+# on the 16-core runner.
+#
+# test.yml calls this and runs on what comes out, so a branch is always tested
+# in the image its own setup/ describes. Dispatch it by hand to publish an image
+# without running the tests.
+#
+# x86_64 only. An aarch64 runner pool exists, but every simulator would have to
+# be built for it and the toolchain pin is an x86_64 archive.
+
+on:
+  workflow_dispatch:
+  workflow_call:
+    outputs:
+      image:
+        description: The image for this commit's setup/, published by the time this returns.
+        value: ${{ jobs.key.outputs.image }}
+
+jobs:
+  # Cheap, and on the small runner: name the image and ask the registry for it.
+  key:
+    runs-on: [self-hosted, slurm, x86_64]
+    permissions:
+      contents: read
+      packages: read
+    outputs:
+      image: ${{ steps.ref.outputs.image }}
+      exists: ${{ steps.ref.outputs.exists }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # A registry that cannot be asked reads as "not there", and the build job
+      # then fails on the push, where the reason is printed.
+      - id: ref
+        run: |
+          image="$(setup/image.sh ref)"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          if setup/image.sh exists; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "$image is published; nothing to build"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "$image is not published; building it"
+          fi
+
+  # The gem5 build is what the big bucket is for: 16 cores, two hours.
+  build:
+    needs: key
+    if: needs.key.outputs.exists != 'true'
+    runs-on: [self-hosted, slurm, big, x86_64]
+    timeout-minutes: 110
+    permissions:
+      contents: read
+      packages: write
+    # Two runs that want the same image take turns; the second finds it there.
+    concurrency:
+      group: image-${{ needs.key.outputs.image }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v4
+
+      # No docker/setup-buildx-action: the runner's default builder is already
+      # registered, and the action's own driver cannot start under podman there.
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and publish
+        run: |
+          if setup/image.sh exists; then
+            echo "published while this job waited; nothing to build"
+            exit 0
+          fi
+          setup/image.sh build --push -j "$(nproc)"
