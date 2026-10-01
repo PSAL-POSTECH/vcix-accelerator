@@ -100,6 +100,15 @@ adapters read it, and both simulators hand the model the same values. This
 repository defines no configuration format of its own; the file is the machine
 description a setup already has.
 
+`config.uint("key", fallback)` reads a value as an unsigned decimal number. The
+fallback is for an absent key only. A value that is present and is not such a
+number -- `abc`, `-1`, `1e3`, `7.9`, `0x10`, `8 cycles`, an empty string, a
+number too large for 64 bits, or one with a leading zero such as `010` -- is a
+configuration error: the run stops with the model's name, the key and the
+value on stderr and exit status 1. It is never read as 0 or replaced by the
+fallback. A model that reads a value itself reports a bad one the same way, by
+throwing `vcix_accel::ConfigError` from `configure`.
+
 Then one line registers it:
 
 ```cpp

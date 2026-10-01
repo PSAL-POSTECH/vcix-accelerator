@@ -1,5 +1,6 @@
 // Test model: owns nothing and reports, for each key below, the value it is
-// configured with or that the key is absent.
+// configured with or that the key is absent; then `count` read as a number.
+#include <cinttypes>
 #include <cstdio>
 
 #include "vcix_accel.hpp"
@@ -23,6 +24,8 @@ class ShowsConfig : public Model {
       if (value) printf("[config] %s = <%s>\n", key, value);
       else printf("[config] %s is absent\n", key);
     }
+    fflush(stdout);
+    printf("[number] count = %" PRIu64 "\n", config.uint("count", 5));
     fflush(stdout);
   }
 

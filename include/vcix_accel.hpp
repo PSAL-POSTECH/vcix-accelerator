@@ -2,8 +2,13 @@
 #ifndef VCIX_ACCEL_HPP
 #define VCIX_ACCEL_HPP
 
+#include <charconv>
+#include <cstdio>
 #include <cstdlib>
+#include <cstring>
+#include <stdexcept>
 #include <string>
+#include <system_error>
 #include <vector>
 
 #include "vcix_accel.h"
@@ -36,14 +41,36 @@ inline uint32_t funct3(const Insn &insn) { return (insn.bits >> 12) & 0x7; }
 // Registers in one vector operand's group.
 inline uint32_t group_size(const Insn &insn) { return insn.lmul_log2 > 0 ? 1u << insn.lmul_log2 : 1u; }
 
+// A value of the machine description that the model cannot use. Thrown out of
+// Model::configure it stops the run: see export_model. Config::uint throws it,
+// and a model may throw it for a value it reads itself.
+class ConfigError : public std::runtime_error {
+ public:
+  ConfigError(const std::string &key, const std::string &value, const std::string &why)
+      : std::runtime_error("machine description: " + key + ": '" + value + "' " + why) {}
+};
+
 class Config {
  public:
   explicit Config(const vcix_config *c) : c_(c) {}
-  // The value as written in the machine description, or nullptr.
+  // The value as written in the machine description, or nullptr when the key
+  // is absent. The pointer is valid only until configure returns.
   const char *get(const std::string &key) const { return c_->get(c_->ctx, key.c_str()); }
+  // The value as an unsigned decimal number. `fallback` is for an absent key
+  // and nothing else: text that is not such a number throws ConfigError.
   uint64_t uint(const std::string &key, uint64_t fallback) const {
     const char *value = get(key);
-    return value ? std::strtoull(value, nullptr, 0) : fallback;
+    if (!value) return fallback;
+    const char *end = value + std::strlen(value);
+    uint64_t number = 0;
+    const std::from_chars_result parsed = std::from_chars(value, end, number, 10);
+    if (parsed.ec == std::errc::invalid_argument || parsed.ptr != end)
+      throw ConfigError(key, value, "is not an unsigned decimal number");
+    if (parsed.ec == std::errc::result_out_of_range) throw ConfigError(key, value, "does not fit in 64 bits");
+    // 010 is eight to a YAML 1.1 reader and ten to a YAML 1.2 one.
+    if (value[0] == '0' && end - value > 1)
+      throw ConfigError(key, value, "has a leading zero, which reads as octal or as decimal depending on the reader");
+    return number;
   }
 
  private:
@@ -89,6 +116,10 @@ class Model {
   virtual void reset() {}
 };
 
+// A ConfigError from configure ends the process here, with the model's name,
+// the key and the value on stderr and exit status 1, which is how both adapters
+// end a run they cannot set up. The C ABI's configure returns nothing, so the
+// wrapper has no way to hand the error to the simulator instead.
 template <class M>
 const vcix_model *export_model() {
   static M model;
@@ -99,7 +130,15 @@ const vcix_model *export_model() {
       &model,
       encodings.data(),
       encodings.size(),
-      [](void *s, const vcix_config *c) { static_cast<M *>(s)->configure(Config(c)); },
+      [](void *s, const vcix_config *c) {
+        M *m = static_cast<M *>(s);
+        try {
+          m->configure(Config(c));
+        } catch (const ConfigError &e) {
+          std::fprintf(stderr, "%s: %s\n", m->name(), e.what());
+          std::exit(1);
+        }
+      },
       [](void *s, const vcix_host *h, const vcix_insn *i) { static_cast<M *>(s)->execute(Host(h), *i); },
       [](void *s, const vcix_insn *i, Cycle n, const vcix_pending *p, size_t c) -> int {
         return static_cast<M *>(s)->can_accept(*i, n, Pending(p, c));

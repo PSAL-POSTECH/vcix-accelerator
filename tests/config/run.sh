@@ -3,6 +3,8 @@
 # include/vcix_accel.h describes at vcix_config: text as written, YAML null and
 # non-scalars absent, an empty file an empty description, the first document.
 # For each <name>.yml the model's report must equal <name>.expected on both.
+# A value the model reads as a number is that number or stops the run, never
+# a guess: Config::uint in include/vcix_accel.hpp.
 # Usage: tests/config/run.sh [build-dir [spike [pk [gem5.opt]]]]
 # Each defaults to what setup/setup.sh produced; see scripts/sim.sh.
 set -uo pipefail
@@ -44,5 +46,41 @@ gem5_run "$BUILD/m5out-config-not_a_mapping" "$MODEL" "$HERE/not_a_mapping.yml" 
 configured=$(grep -c '^\[config\]' "$BUILD/config-not_a_mapping.gem5.log")
 ok=0; [ "$rc" = 1 ] && [ "$configured" = 0 ] && ok=1
 report $ok "gem5 refuses not_a_mapping.yml (exit $rc, model configured with $configured values)"
+
+# number <simulator> <value as written in YAML> <exit-code> <the number, or "" when the run must stop>
+# shows_config reads `count` with Config::uint and reports "[number] count = N".
+# A malformed value must stop the run before that, with the wrapper's message:
+# "<model>: machine description: <key>: '<text>' ..." (ConfigError, vcix_accel.hpp).
+number() {
+  local sim=$1 written=$2 rc=$3 want=$4 ok=0 got said text
+  local log="$BUILD/config-number.$sim.log"
+  got=$(grep -c '^\[number\] ' "$log")
+  if [ -n "$want" ]; then
+    [ "$rc" = 0 ] && grep -Fxq "[number] count = $want" "$log" && ok=1
+    report $ok "$sim count: $written is $want (exit $rc)"
+  else
+    text=${written#\"}; text=${text%\"}   # the cases below quote with "..." only, and escape nothing
+    said=$(grep -Fc "shows_config: machine description: count: '$text' " "$log")
+    [ "$rc" = 1 ] && [ "$got" = 0 ] && [ "$said" = 1 ] && ok=1
+    report $ok "$sim count: $written stops the run (exit $rc, reported $said, number handed on $got)"
+  fi
+}
+
+# Each value as it is written after "count: ", and what it must be read as.
+NUMBERS=(
+  '8|8' '0|0' '"8"|8' '18446744073709551615|18446744073709551615' '~|5'
+  'abc|' 'true|' '""|' '-1|' '+1|' '1e3|' '7.9|' '010|' '8 cycles|' '0x10|' '" 8"|' '18446744073709551616|'
+)
+for case in "${NUMBERS[@]}"; do
+  written=${case%|*}; want=${case##*|}
+  printf 'count: %s\n' "$written" > "$BUILD/config-number.yml"
+
+  spike_run "$MODEL" "$BUILD/config-number.yml" "$BUILD/nothing" > "$BUILD/config-number.spike.log" 2>&1
+  number spike "$written" $? "$want"
+
+  gem5_run "$BUILD/m5out-config-number" "$MODEL" "$BUILD/config-number.yml" "$BUILD/nothing" \
+    > "$BUILD/config-number.gem5.log" 2>&1
+  number gem5 "$written" $? "$want"
+done
 
 exit $failed
