@@ -178,8 +178,13 @@ adapters/gem5/            where the gem5 change lives
 examples/                 models, each with a program that exercises it,
                           and a gem5 fixture to run them
 tools/timing_probe.cc     drives a model's timing face without gem5
+tests/run.sh              every test below, on both simulators
 tests/ownership/          an unowned instruction is illegal on both simulators
 tests/pipeline/           a pipelined model overlaps instructions on gem5
+tests/print_args/         the example reaches the model once per instruction
+setup/                    the pinned environment: versions.env, the scripts
+                          that build it, and the image
+scripts/                  build this repository; how each simulator is started
 ```
 
 ## Examples
@@ -198,14 +203,52 @@ encodings, state, and timing.
   instruction of each operand form, one under LMUL=2, and one custom-1
   instruction.
 
+## Environment
+
+Building and running needs a RISC-V toolchain, the proxy kernel, Spike and the
+gem5 branch. `setup/versions.env` pins all of them -- repository and commit for
+each simulator, the scons and Python that gem5 needs -- and is the only place a
+version is written. There are two ways to get what it describes.
+
+**The image.** CI publishes the environment, already built, to GHCR. Its tag is
+derived from the contents of `setup/`, so a checkout names the image it needs:
+
+```
+docker run --rm -it -v "$PWD":/work -w /work "$(setup/image.sh ref)" bash
+```
+
+`setup/image.sh build` builds the same image locally. It holds the toolchain,
+pk, Spike (source and build tree, which the adapter is built against) and the
+gem5 binary, but nothing of this repository: a checkout is built inside it.
+
+**The scripts**, on Ubuntu 22.04:
+
+```
+sudo setup/system.sh       # system packages
+setup/setup.sh -j 16       # toolchain, pk, spike, gem5, then this repository
+```
+
+Everything lands under `/opt/vcix-env`; set `VCIX_ENV_ROOT` to put it elsewhere
+(and keep it set when running). The gem5 build is most of the time: about ten
+minutes at `-j 24`. `setup/setup.sh spike repo` runs only those steps.
+
 ## Build and run
+
+```
+scripts/build.sh                 # cmake + ninja into build/, against the Spike above
+tests/run.sh                     # every test, on both simulators; non-zero if any fails
+examples/print_args/run.sh       # the example, printing what each face is given
+```
+
+The run scripts use the simulators the setup produced. To use others, pass them
+-- `tests/run.sh <build-dir> <spike> <pk> <gem5.opt>` -- or set `SPIKE`, `PK`,
+`GEM5`; `scripts/build.sh` takes the Spike tree from `SPIKE_ROOT`.
+
+By hand, the build is
 
 ```
 cmake -G Ninja -S . -B build -DSPIKE_SRC=<riscv-isa-sim> -DSPIKE_BUILD=<riscv-isa-sim>/build
 ninja -C build
-examples/print_args/run.sh build <spike> <pk> <gem5.opt>
-tests/ownership/run.sh     build <spike> <pk> <gem5.opt>
-tests/pipeline/run.sh      build <spike> <pk> <gem5.opt>
 ```
 
 Without `SPIKE_SRC` and `SPIKE_BUILD` only the models and the probe are built;
@@ -214,7 +257,8 @@ a model needs no simulator tree.
 Spike loads the adapter with `--extlib=libvcix_spike.so` and the ISA string
 suffix `_xvcixaccel`, and the adapter loads the model named by the
 `VCIX_ACCEL_MODEL` environment variable. gem5 takes the model as the
-`vcixModel` parameter of a functional unit.
+`vcixModel` parameter of a functional unit. `scripts/sim.sh` is where the run
+scripts keep both command lines.
 
 ## Status
 
