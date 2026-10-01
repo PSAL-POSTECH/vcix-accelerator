@@ -11,6 +11,9 @@ target_include_directories(vcix_accel INTERFACE include)
 add_library(print_args SHARED examples/print_args/print_args.cc)
 target_link_libraries(print_args PRIVATE vcix_accel)
 
+add_library(owns_one SHARED tests/ownership/owns_one.cc)
+target_link_libraries(owns_one PRIVATE vcix_accel)
+
 add_executable(timing_probe tools/timing_probe.cc)
 target_link_libraries(timing_probe PRIVATE vcix_accel ${CMAKE_DL_LIBS})
 
