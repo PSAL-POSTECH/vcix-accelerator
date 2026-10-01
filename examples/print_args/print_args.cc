@@ -1,6 +1,7 @@
 // Example: a unit that only observes. Claims all of custom-2 and custom-1 and prints what
 // each face is given; computes nothing. Latency per register of the operand group
-// comes from the machine description; after a commit the unit is busy for RECOVERY cycles.
+// comes from the machine description. It takes one instruction at a time, and after a
+// commit it is busy for RECOVERY cycles.
 #include <cinttypes>
 #include <cstdio>
 #include <cstring>
@@ -57,8 +58,10 @@ class PrintArgs : public Model {
     fflush(stdout);
   }
 
-  bool can_accept(const Insn &, Cycle now) const override { return now >= busy_until_; }
-  Cycle latency(const Insn &insn, Cycle now) const override {
+  bool can_accept(const Insn &, Cycle now, const Pending &pending) const override {
+    return pending.empty() && now >= busy_until_;
+  }
+  Cycle latency(const Insn &insn, Cycle now, const Pending &) const override {
     Cycle cycles = latency_ * group_size(insn);
     print_fields("issue  ", insn);
     printf(" | cycle=%" PRIu64 " ready=%" PRIu64 "\n", now, now + cycles);

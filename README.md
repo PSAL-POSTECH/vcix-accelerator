@@ -79,8 +79,8 @@ into one `.so`. It needs neither simulator's source tree.
 | `owns()` | both | the `{match, mask}` encodings that belong to this model |
 | `configure(config)` | both | nothing; read the machine's numbers by key (optional) |
 | `execute(host, insn)` | Spike | what the instruction does to registers and memory, through `host` |
-| `can_accept(insn, now)` | gem5 | whether the unit can start this instruction in this cycle; must not change state |
-| `latency(insn, now)` | gem5 | cycles until the result is ready; must not change state |
+| `can_accept(insn, now, pending)` | gem5 | whether the unit can start this instruction in this cycle; must not change state |
+| `latency(insn, now, pending)` | gem5 | cycles until the result is ready; must not change state |
 | `commit(insn, now)` | gem5 | nothing; this is where the timing state changes, once per instruction that really ran |
 | `reset()` | both | return to the initial state (optional) |
 
@@ -104,8 +104,17 @@ VCIX_ACCEL_REGISTER(YourModel)
 `can_accept` and `latency` are asked when gem5 issues the instruction, and an
 issued instruction can be squashed and issued again, so they may be called more
 than once for an instruction that runs once. Only `commit` is one-to-one with
-the program. Between an instruction's issue and its commit, a later instruction
-sees the state as it was before the first one.
+the program, and it is the only place the model's state changes.
+
+An accepted instruction does not hold the unit. It is in flight from its issue
+until its commit, `latency` cycles later or when the instructions before it
+have committed, whichever is later. `pending` is the list of this model's
+instructions in flight, oldest first, each with the cycle it was issued and the
+cycle it will be ready; gem5 keeps the list and drops squashed instructions
+from it. So how many instructions overlap is the model's decision: a unit that
+takes one at a time accepts only when `pending` is empty, a pipelined unit
+accepts while `pending` is shorter than its depth, and a unit with a queue
+counts the pushes in flight.
 
 The model has two sets of methods because the two simulators know different
 things: Spike knows values and not time, gem5 knows time and not values. They
@@ -170,6 +179,7 @@ examples/                 models, each with a program that exercises it,
                           and a gem5 fixture to run them
 tools/timing_probe.cc     drives a model's timing face without gem5
 tests/ownership/          an unowned instruction is illegal on both simulators
+tests/pipeline/           a pipelined model overlaps instructions on gem5
 ```
 
 ## Examples
@@ -183,8 +193,8 @@ encodings, state, and timing.
   computes nothing, and prints what each face is given: the operands it can see
   on the functional face, the instruction and the cycle on the timing face.
   An instruction takes a configured number of cycles per register of its
-  operand group (so LMUL shows up in the timing), and the unit is busy for 3
-  after a commit. `machine.yml` stands in for the machine description. `vcix.S` drives it with one `sf.vc.*`
+  operand group (so LMUL shows up in the timing). It takes one instruction at
+  a time and is busy for 3 cycles after a commit. `machine.yml` stands in for the machine description. `vcix.S` drives it with one `sf.vc.*`
   instruction of each operand form, one under LMUL=2, and one custom-1
   instruction.
 
@@ -195,6 +205,7 @@ cmake -G Ninja -S . -B build -DSPIKE_SRC=<riscv-isa-sim> -DSPIKE_BUILD=<riscv-is
 ninja -C build
 examples/print_args/run.sh build <spike> <pk> <gem5.opt>
 tests/ownership/run.sh     build <spike> <pk> <gem5.opt>
+tests/pipeline/run.sh      build <spike> <pk> <gem5.opt>
 ```
 
 Without `SPIKE_SRC` and `SPIKE_BUILD` only the models and the probe are built;

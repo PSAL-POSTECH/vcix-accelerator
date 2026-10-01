@@ -14,6 +14,21 @@ using Cycle = vcix_cycle_t;
 using Encoding = vcix_encoding;
 using Insn = vcix_insn;
 
+// The instructions issued to this model and not yet committed, oldest first.
+class Pending {
+ public:
+  Pending(const vcix_pending *first, size_t count) : first_(first), count_(count) {}
+  size_t size() const { return count_; }
+  bool empty() const { return count_ == 0; }
+  const vcix_pending &operator[](size_t i) const { return first_[i]; }
+  const vcix_pending *begin() const { return first_; }
+  const vcix_pending *end() const { return first_ + count_; }
+
+ private:
+  const vcix_pending *first_;
+  size_t count_;
+};
+
 inline uint32_t rd(const Insn &insn) { return (insn.bits >> 7) & 0x1f; }
 inline uint32_t rs1(const Insn &insn) { return (insn.bits >> 15) & 0x1f; }
 inline uint32_t rs2(const Insn &insn) { return (insn.bits >> 20) & 0x1f; }
@@ -67,8 +82,8 @@ class Model {
 
   virtual void execute(const Host &host, const Insn &insn) = 0;
 
-  virtual bool can_accept(const Insn &insn, Cycle now) const = 0;
-  virtual Cycle latency(const Insn &insn, Cycle now) const = 0;
+  virtual bool can_accept(const Insn &insn, Cycle now, const Pending &pending) const = 0;
+  virtual Cycle latency(const Insn &insn, Cycle now, const Pending &pending) const = 0;
   virtual void commit(const Insn &insn, Cycle now) = 0;
 
   virtual void reset() {}
@@ -86,10 +101,13 @@ const vcix_model *export_model() {
       encodings.size(),
       [](void *s, const vcix_config *c) { static_cast<M *>(s)->configure(Config(c)); },
       [](void *s, const vcix_host *h, const vcix_insn *i) { static_cast<M *>(s)->execute(Host(h), *i); },
-      [](void *s, const vcix_insn *i, Cycle n) -> int { return static_cast<M *>(s)->can_accept(*i, n); },
-      [](void *s, const vcix_insn *i, Cycle n) -> Cycle { return static_cast<M *>(s)->latency(*i, n); },
+      [](void *s, const vcix_insn *i, Cycle n, const vcix_pending *p, size_t c) -> int {
+        return static_cast<M *>(s)->can_accept(*i, n, Pending(p, c));
+      },
+      [](void *s, const vcix_insn *i, Cycle n, const vcix_pending *p, size_t c) -> Cycle {
+        return static_cast<M *>(s)->latency(*i, n, Pending(p, c));
+      },
       [](void *s, const vcix_insn *i, Cycle n) { static_cast<M *>(s)->commit(*i, n); },
-      nullptr,
       [](void *s) { static_cast<M *>(s)->reset(); },
   };
   return &table;

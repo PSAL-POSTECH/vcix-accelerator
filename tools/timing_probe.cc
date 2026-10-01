@@ -1,5 +1,6 @@
 // Drives the timing face without gem5: N copies of one instruction, one at a
-// time. Each is issued when the model accepts it and committed latency cycles later.
+// time (nothing is ever in flight). Each is issued when the model accepts it and
+// committed latency cycles later.
 #include <dlfcn.h>
 
 #include <cstdio>
@@ -31,11 +32,8 @@ int main(int argc, char **argv) {
 
   vcix_cycle_t now = 0;
   for (int i = 0; i < count; i++) {
-    while (!m->can_accept(m->self, insn, now)) {
-      if (m->tick) m->tick(m->self, now);
-      now++;
-    }
-    vcix_cycle_t lat = m->latency(m->self, insn, now);
+    while (!m->can_accept(m->self, insn, now, nullptr, 0)) now++;
+    vcix_cycle_t lat = m->latency(m->self, insn, now, nullptr, 0);
     printf("insn %d: issued at %llu, committed at %llu\n", i, (unsigned long long)now, (unsigned long long)(now + lat));
     now += lat;
     m->commit(m->self, insn, now);

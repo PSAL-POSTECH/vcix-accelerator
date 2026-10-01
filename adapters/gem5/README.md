@@ -16,14 +16,19 @@ The gem5 side lives in the gem5 repository, not here: branch `vcix` of
 4. **Functional unit** — `MinorVcixAccelFU`, whose `vcixModel` parameter names
    the model `.so`. `vcixConfigKeys` / `vcixConfigValues` carry the machine
    description; the config script reads the YAML, so gem5 itself parses no
-   file. The model is loaded and configured when the CPU is built.
-5. **Issue** — if the unit's model owns the instruction, `Execute::issue` asks
-   `can_accept`, and a refusal stalls it; on acceptance the result is ready
-   after the cycles `latency` returns. An instruction no model owns passes
-   through unasked.
-6. **Commit** — an owned instruction calls the model's `commit`. An instruction
-   no model owns becomes an illegal instruction here, on the same path as any
-   other illegal instruction.
+   file. The model is loaded and configured when the CPU is built, and a unit
+   that takes `VcixAccel` instructions without naming a model is rejected then.
+5. **Issue** — `Execute::issue` asks the unit's model `can_accept`, in the same
+   chain of conditions that keeps any instruction from issuing; a refusal
+   leaves it waiting. An accepted instruction is asked its `latency` and then
+   occupies no functional unit: it waits in the in-order queue until
+   `issue cycle + latency`, as gem5's own unit-less instructions do. Both calls
+   are given the model's instructions in flight. An instruction no model owns
+   goes through unasked.
+6. **Commit** — in order, and not before that cycle. An instruction the model
+   does not own becomes an illegal instruction here, on the same path as any
+   other. Otherwise the instruction's own checks run first (vector state), and
+   only if they raise no fault is the model's `commit` called.
 
 The model receives the instruction bits with `vl`, SEW and LMUL.
 
