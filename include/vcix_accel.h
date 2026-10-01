@@ -40,9 +40,23 @@ typedef struct vcix_pending {
   vcix_cycle_t ready;  /* issued + the latency the model answered */
 } vcix_pending;
 
-/* The machine description, as the adapter read it: the value of a top-level
- * key as written in the file, or NULL when the file has no such key. The
- * model does not know the file or its format. */
+/* The machine description, as the adapter read it. The model does not know
+ * the file or its format; the adapters do, and both must give the same answer
+ * for the same file. The file is YAML, and the rule is:
+ *
+ *   - The description is the top-level mapping of the file's first document.
+ *     A file with no document (empty, or only comments) is an empty
+ *     description. A top level that is not a mapping is refused by the adapter.
+ *   - get(key) returns the value of a top-level key "as written": the text of
+ *     the scalar, with YAML's quoting undone and no typing applied. `8`, "8"
+ *     and '8' are all the text 8; `010` is the text 010, not a number; "null"
+ *     in quotes is the text null.
+ *   - A key is "absent", and get(key) returns NULL, when the file has no such
+ *     key, when its value is YAML null (nothing after the colon, `~`, `null`),
+ *     or when its value is a mapping or a sequence. What is null is decided by
+ *     the YAML library's resolver, never by comparing text: "" in quotes is a
+ *     string, so that key is present and its text is empty.
+ */
 typedef struct vcix_config {
   void *ctx;
   const char *(*get)(void *ctx, const char *key);

@@ -17,6 +17,9 @@ target_link_libraries(owns_one PRIVATE vcix_accel)
 add_library(pipelined SHARED tests/pipeline/pipelined.cc)
 target_link_libraries(pipelined PRIVATE vcix_accel)
 
+add_library(shows_config SHARED tests/config/shows_config.cc)
+target_link_libraries(shows_config PRIVATE vcix_accel)
+
 add_executable(timing_probe tools/timing_probe.cc)
 target_link_libraries(timing_probe PRIVATE vcix_accel ${CMAKE_DL_LIBS})
 

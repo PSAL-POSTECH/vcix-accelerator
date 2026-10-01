@@ -19,13 +19,32 @@ parser.add_argument("--max-ticks", type=int, help="stop the simulation after thi
 args = parser.parse_args()
 
 
-# Top-level scalars of the machine description, each as written in the file:
-# BaseLoader keeps them as strings, the same text the Spike adapter hands over.
-settings = {}
-if args.config:
-    with open(args.config) as f:
-        document = yaml.load(f, Loader=yaml.BaseLoader)
-    settings = {key: value for key, value in document.items() if isinstance(value, str)}
+# The tag PyYAML's resolver gives a null value: nothing after the colon, `~`,
+# `null`. A quoted "null" or "" gets the string tag instead.
+YAML_NULL = "tag:yaml.org,2002:null"
+
+
+# The machine description as a model is to be handed it: the rule is the one
+# include/vcix_accel.h states at vcix_config, for both adapters. The file is
+# composed, not loaded: a node carries the scalar's text as written and the tag
+# the resolver gave it, so nothing here types a value or compares text to
+# decide what is null.
+def machine_description(path):
+    with open(path) as f:
+        root = next(yaml.compose_all(f, Loader=yaml.SafeLoader), None)
+    if root is None:
+        return {}
+    if not isinstance(root, yaml.MappingNode):
+        print(f"gem5_se.py: {path}: the top level of a machine description is a mapping", file=sys.stderr)
+        sys.exit(1)
+    return {
+        key.value: value.value
+        for key, value in root.value
+        if isinstance(key, yaml.ScalarNode) and isinstance(value, yaml.ScalarNode) and value.tag != YAML_NULL
+    }
+
+
+settings = machine_description(args.config) if args.config else {}
 
 
 class ExampleFUPool(MinorFUPool):

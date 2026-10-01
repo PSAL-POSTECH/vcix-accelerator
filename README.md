@@ -90,10 +90,15 @@ latency can depend on how much data the instruction moves.
 
 `configure` is called once, before anything else. `config.get("key")` returns
 the value of a top-level key of the machine description, as written there, or
-nothing if the key is absent. The model never sees the file: the adapters read
-it, and both simulators hand the model the same values. This repository defines
-no configuration format of its own; the file is the machine description a setup
-already has.
+nothing if the key is absent. "As written" is the scalar's text with no typing
+applied: `010` arrives as the text `010`. "Absent" covers a key the file does
+not have, a key whose value is YAML null (`k:`, `k: ~`, `k: null`) and a key
+whose value is not a scalar; `k: ""` is present, with empty text. The rule is
+stated once, at `vcix_config` in `include/vcix_accel.h`, and
+`tests/config` holds both simulators to it. The model never sees the file: the
+adapters read it, and both simulators hand the model the same values. This
+repository defines no configuration format of its own; the file is the machine
+description a setup already has.
 
 Then one line registers it:
 
@@ -182,6 +187,7 @@ tests/run.sh              every test below, on both simulators
 tests/ownership/          an unowned instruction is illegal on both simulators
 tests/pipeline/           a pipelined model overlaps instructions on gem5
 tests/print_args/         the example reaches the model once per instruction
+tests/config/             both simulators hand a model the same machine description
 tests/harness/            the run scripts themselves: a build that fails, fails
 setup/                    the pinned environment: versions.env, the scripts
                           that build it, and the image
