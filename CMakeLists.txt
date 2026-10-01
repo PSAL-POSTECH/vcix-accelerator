@@ -11,6 +11,9 @@ target_include_directories(vcix_accel INTERFACE include)
 add_library(print_args SHARED examples/print_args/print_args.cc)
 target_link_libraries(print_args PRIVATE vcix_accel)
 
+add_executable(timing_probe tools/timing_probe.cc)
+target_link_libraries(timing_probe PRIVATE vcix_accel ${CMAKE_DL_LIBS})
+
 # The Spike adapter is the only target that needs a simulator tree: Spike
 # installs no headers and does not export extension_t's typeinfo, so it is built
 # against the source tree and links libriscv.a the way Spike's own customext does.
