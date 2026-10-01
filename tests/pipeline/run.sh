@@ -21,10 +21,12 @@ expect() {
 
 spike_run "$MODEL" "" "$BUILD/burst" > "$BUILD/burst.spike.log" 2>&1
 expect "spike executes all six"                "$BUILD/burst.spike.log" '^\[model\] execute$' -eq 6
+expect "spike calls nothing else"              "$BUILD/burst.spike.log" '^\[model\] \(issue\|commit\) ' -eq 0
 
 gem5_run "$BUILD/m5out-burst" "$MODEL" "" "$BUILD/burst" > "$BUILD/burst.gem5.log" 2>&1
 expect "gem5 commits all six"                  "$BUILD/burst.gem5.log" '^\[model\] commit '            -eq 6
 expect "gem5 issues with three in flight"      "$BUILD/burst.gem5.log" '^\[model\] issue .* pending=3$' -ge 1
+expect "gem5 never calls execute"              "$BUILD/burst.gem5.log" '^\[model\] execute$' -eq 0
 expect "gem5 never exceeds the model's depth"  "$BUILD/burst.gem5.log" '^\[model\] issue .* pending=[4-9]' -eq 0
 
 exit $failed
