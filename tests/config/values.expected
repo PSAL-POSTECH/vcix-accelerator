@@ -1,0 +1,13 @@
+[config] plain = <8>
+[config] quoted = <8>
+[config] empty is absent
+[config] tilde is absent
+[config] null_word is absent
+[config] quoted_empty = <>
+[config] quoted_null = <null>
+[config] quoted_tilde = <~>
+[config] leading_zero = <010>
+[config] spaced = <8 cycles>
+[config] nested is absent
+[config] listed is absent
+[config] not_in_the_file is absent

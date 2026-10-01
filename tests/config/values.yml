@@ -1,0 +1,14 @@
+# One key for each way a value can be written. shows_config asks for all of
+# them and for one key that is not here; expected.txt is what it must be given.
+plain: 8
+quoted: "8"
+empty:
+tilde: ~
+null_word: null
+quoted_empty: ""
+quoted_null: "null"
+quoted_tilde: '~'
+leading_zero: 010
+spaced: 8 cycles
+nested: {a: 1}
+listed: [1, 2]
