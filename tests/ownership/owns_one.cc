@@ -15,8 +15,8 @@ class OwnsOne : public Model {
   std::vector<Encoding> owns() const override { return {{0x0600405B, 0xFE00707F, "owned"}}; }
 
   void execute(const Host &, const Insn &insn) override { report("execute", insn); }
-  bool can_accept(const Insn &, Cycle) const override { return true; }
-  Cycle latency(const Insn &insn, Cycle) const override {
+  bool can_accept(const Insn &, Cycle, const Pending &) const override { return true; }
+  Cycle latency(const Insn &insn, Cycle, const Pending &) const override {
     report("issue", insn);
     return 1;
   }
