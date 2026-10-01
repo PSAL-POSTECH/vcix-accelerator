@@ -120,8 +120,13 @@ class Model {
 // the key and the value on stderr and exit status 1, which is how both adapters
 // end a run they cannot set up. The C ABI's configure returns nothing, so the
 // wrapper has no way to hand the error to the simulator instead.
+//
+// The model object and its table are this library's alone: with default
+// visibility the statics below are unique symbols, which the dynamic linker
+// merges across every library in the process, so a second model library whose
+// class has the same name would answer with the first one's table.
 template <class M>
-const vcix_model *export_model() {
+__attribute__((visibility("hidden"))) const vcix_model *export_model() {
   static M model;
   static const std::vector<Encoding> encodings = model.owns();
   static const vcix_model table = {
@@ -154,7 +159,12 @@ const vcix_model *export_model() {
 
 }  // namespace vcix_accel
 
-#define VCIX_ACCEL_REGISTER(ModelClass) \
-  extern "C" const vcix_model *vcix_accel_model(void) { return vcix_accel::export_model<ModelClass>(); }
+// Defines the one symbol a model library exports. It is given default
+// visibility here, so a model is built with -fvisibility=hidden, as it should
+// be, without its author exporting anything by hand.
+#define VCIX_ACCEL_REGISTER(ModelClass)                                                    \
+  extern "C" __attribute__((visibility("default"))) const vcix_model *vcix_accel_model(void) { \
+    return vcix_accel::export_model<ModelClass>();                                         \
+  }
 
 #endif

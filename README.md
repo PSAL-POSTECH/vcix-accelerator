@@ -115,6 +115,16 @@ Then one line registers it:
 VCIX_ACCEL_REGISTER(YourModel)
 ```
 
+Build the library with hidden visibility (`-fvisibility=hidden
+-fvisibility-inlines-hidden`; in CMake, `CXX_VISIBILITY_PRESET hidden`). The
+macro exports the one symbol a simulator looks up, `vcix_accel_model`, by
+itself, so nothing else has to be marked. A simulator can hold more than one
+model, and symbols a library leaves visible can be merged with another
+library's symbols of the same name: two models whose classes were both called
+`Accel` used to answer with one table. The model object and its table are now
+hidden whatever the flags, but only the flag covers the model's own code.
+`tests/two_models` loads two such libraries and checks each gets its own.
+
 `can_accept` and `latency` are asked when gem5 issues the instruction, and an
 issued instruction can be squashed and issued again, so they may be called more
 than once for an instruction that runs once. Only `commit` is one-to-one with
@@ -195,6 +205,7 @@ tools/timing_probe.cc     drives a model's timing face without gem5
 tests/run.sh              every test below, on both simulators
 tests/ownership/          an unowned instruction is illegal on both simulators
 tests/pipeline/           a pipelined model overlaps instructions on gem5
+tests/two_models/         two model libraries in one process do not share a table
 tests/print_args/         the example reaches the model once per instruction
 tests/config/             both simulators hand a model the same machine description
 tests/harness/            the run scripts themselves: a build that fails, fails

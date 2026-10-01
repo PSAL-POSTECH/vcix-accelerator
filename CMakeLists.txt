@@ -8,17 +8,32 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 add_library(vcix_accel INTERFACE)
 target_include_directories(vcix_accel INTERFACE include)
 
-add_library(print_args SHARED examples/print_args/print_args.cc)
-target_link_libraries(print_args PRIVATE vcix_accel)
+# A model library exports one symbol, vcix_accel_model, which
+# VCIX_ACCEL_REGISTER makes visible by itself. Everything else is hidden, so
+# two models loaded into one simulator cannot share symbols by accident.
+function(vcix_accel_add_model name source)
+  add_library(${name} SHARED ${source})
+  target_link_libraries(${name} PRIVATE vcix_accel)
+  set_target_properties(${name} PROPERTIES CXX_VISIBILITY_PRESET hidden VISIBILITY_INLINES_HIDDEN ON)
+endfunction()
 
-add_library(owns_one SHARED tests/ownership/owns_one.cc)
-target_link_libraries(owns_one PRIVATE vcix_accel)
+vcix_accel_add_model(print_args examples/print_args/print_args.cc)
+vcix_accel_add_model(owns_one tests/ownership/owns_one.cc)
+vcix_accel_add_model(pipelined tests/pipeline/pipelined.cc)
+vcix_accel_add_model(shows_config tests/config/shows_config.cc)
 
-add_library(pipelined SHARED tests/pipeline/pipelined.cc)
-target_link_libraries(pipelined PRIVATE vcix_accel)
-
-add_library(shows_config SHARED tests/config/shows_config.cc)
-target_link_libraries(shows_config PRIVATE vcix_accel)
+# tests/two_models: one source built twice, so both libraries define a model
+# class of the same global name; and once more with the compiler's default
+# visibility, the way a model built outside this file may well be.
+foreach(which 1 2)
+  vcix_accel_add_model(same_name_${which} tests/two_models/same_name.cc)
+  target_compile_definitions(same_name_${which} PRIVATE WHICH=${which})
+  vcix_accel_add_model(same_name_default_${which} tests/two_models/same_name.cc)
+  target_compile_definitions(same_name_default_${which} PRIVATE WHICH=${which})
+  set_target_properties(same_name_default_${which} PROPERTIES CXX_VISIBILITY_PRESET default VISIBILITY_INLINES_HIDDEN OFF)
+endforeach()
+add_executable(load_two tests/two_models/load_two.cc)
+target_link_libraries(load_two PRIVATE vcix_accel ${CMAKE_DL_LIBS})
 
 add_executable(timing_probe tools/timing_probe.cc)
 target_link_libraries(timing_probe PRIVATE vcix_accel ${CMAKE_DL_LIBS})
