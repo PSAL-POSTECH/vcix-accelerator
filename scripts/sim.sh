@@ -42,6 +42,7 @@ rv_program() {
 }
 
 # spike_run <model.so> <machine.yml, or ""> <elf>
+# Exits with the program's exit code.
 spike_run() {
   local settings=("VCIX_ACCEL_MODEL=$1")
   [ -n "$2" ] && settings+=("VCIX_ACCEL_CONFIG=$2")
@@ -49,11 +50,12 @@ spike_run() {
     --isa=rv64gcv_zfh_xvcixaccel --varch=vlen:256,elen:64 "$PK" "$3"
 }
 
-# gem5_run <output-dir> <model.so> <machine.yml, or ""> <elf>
+# gem5_run <output-dir> <model.so> <machine.yml, or ""> <elf> [fixture options]
+# Exits with the program's exit code, as Spike does: the fixture passes it on.
 gem5_run() {
   local description=()
   [ -n "$3" ] && description=(--config "$3")
-  "$GEM5" -d "$1" "$REPO/examples/gem5_se.py" --model "$2" "${description[@]}" "$4"
+  "$GEM5" -d "$1" "$REPO/examples/gem5_se.py" --model "$2" "${description[@]}" "${@:5}" "$4"
 }
 
 # How each simulator says that a run ended as an illegal instruction. The exit
