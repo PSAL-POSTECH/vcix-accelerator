@@ -3,7 +3,7 @@
 # the RISC-V toolchain, the proxy kernel, Spike and gem5 -- then this repository.
 # Run from anywhere; system.sh (the system packages, as root) comes first.
 #
-#     ./setup/setup.sh                 everything                 (~15 min at -j 24)
+#     ./setup/setup.sh                 everything
 #     ./setup/setup.sh -j 8            cap build parallelism      (default: nproc)
 #     ./setup/setup.sh spike repo      only those steps
 #
@@ -97,20 +97,25 @@ if want spike; then
 fi
 
 if want gem5; then
-  log "gem5 @ $GEM5_BRANCH"
-  fetch_commit "$GEM5_ROOT" "$GEM5_REPO" "$GEM5_SHA"
-  STAMP="$GEM5_BIN.vcix-built"
-  WANT="$GEM5_SHA scons-$SCONS_VERSION $PYTHON"
-  if [ -x "$GEM5_BIN" ] && [ -f "$STAMP" ] && [ "$(cat "$STAMP")" = "$WANT" ]; then
-    echo "  already built"
+  log "gem5 $GEM5_RELEASE"
+  STAMP="$GEM5_ROOT/.vcix-gem5"
+  if [ -f "$STAMP" ] && [ "$(cat "$STAMP")" = "$GEM5_SHA256" ]; then
+    echo "  already at $GEM5_SHA256"
   else
-    [ -x "$SCONS_VENV/bin/python" ] || "$PYTHON" -m venv "$SCONS_VENV"
-    "$SCONS_VENV/bin/pip" install -q "scons==$SCONS_VERSION"
-    cd "$GEM5_ROOT"
-    PYTHON_CONFIG="$PYTHON-config" "$SCONS_VENV/bin/scons" "$GEM5_TARGET" -j"$JOBS" --ignore-style
-    echo "$WANT" > "$STAMP"
+    TMP="$(mktemp -d)"
+    trap 'rm -rf "$TMP"' EXIT
+    curl -fSL --retry 3 -o "$TMP/gem5.tar.gz" "$GEM5_URL"
+    echo "$GEM5_SHA256  $TMP/gem5.tar.gz" | sha256sum -c -
+    rm -rf "$GEM5_ROOT"; mkdir -p "$GEM5_ROOT"
+    tar -xzf "$TMP/gem5.tar.gz" -C "$GEM5_ROOT" --no-same-owner
+    rm -rf "$TMP"; trap - EXIT
+    echo "$GEM5_SHA256" > "$STAMP"
   fi
   test -x "$GEM5_BIN" || { echo "gem5 did not land at $GEM5_BIN" >&2; exit 1; }
+  INFO="$(mktemp -d)"
+  "$GEM5_BIN" --build-info > "$INFO/build-info"
+  head -n 4 "$INFO/build-info"
+  rm -rf "$INFO"
   echo "  $GEM5_BIN"
 fi
 
