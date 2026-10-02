@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The rules of the interface, one section each: ownership, the machine description,
-# the model table, and the harness the other tests stand on.
+# the model table, processor state, and the harness the other tests stand on.
 # Usage: tests/contract/run.sh [build-dir [spike [pk [gem5.opt]]]]
 set -uo pipefail
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -15,11 +15,12 @@ report() {
   if [ "$1" = 1 ]; then echo "PASS  $2"; else echo "FAIL  $2"; failed=1; fi
 }
 
-# program <name>: $HERE/<name>.S built into $BUILD/<name>; the test ends if it does not build.
+# program <name> [link options]: $HERE/<name>.S built into $BUILD/<name>; the test ends if it does not build.
 program() {
-  rv_program "$HERE/$1.S" "$BUILD/$1" || { echo "FAIL  $1.S does not build"; exit 2; }
+  rv_program "$HERE/$1.S" "$BUILD/$1" "${@:2}" || { echo "FAIL  $1.S does not build"; exit 2; }
 }
 for name in owned unowned nothing segfault returns3; do program $name; done
+program status -nostdlib -Wl,-N,-Ttext=0x80000000,--no-warn-rwx-segments
 
 echo "-- ownership"
 
@@ -149,6 +150,25 @@ probe "a model of another ABI version"         1 0 "$BUILD/libother_abi.so" $OWN
 probe "instruction 'zz' is refused"            2 0 "$OWNS_ONE" zz 3
 probe "count 'abc' is refused"                 2 0 "$OWNS_ONE" $OWNED_INSN abc
 probe "lmul-log2 '40' is refused"              2 0 "$OWNS_ONE" $OWNED_INSN 3 40
+
+# gem5 only: the Spike adapter does not check configure or the table yet.
+gem5_run "$BUILD/m5out-no_configure" "$BUILD/libno_configure.so" "" "$BUILD/owned" > "$BUILD/no_configure.gem5.log" 2>&1; rc=$?
+ok=0; [ "$rc" = 0 ] && ok=1
+report $ok "gem5 takes a table with configure and reset NULL (exit $rc)"
+
+gem5_run "$BUILD/m5out-null_table" "$BUILD/libnull_table.so" "" "$BUILD/owned" > "$BUILD/null_table.gem5.log" 2>&1; rc=$?
+said=$(grep -c 'fatal: .*libnull_table.so: vcix_accel_model() returned no table$' "$BUILD/null_table.gem5.log")
+ok=0; [ "$rc" = 1 ] && [ "$said" = 1 ] && ok=1
+report $ok "gem5 refuses a library that hands over no table (exit $rc, said so $said of 1)"
+
+echo "-- processor state"
+
+# gem5 only, on bare metal: status.S ends with one bit per failed check. With FS off the
+# model must see no commit of sf.vc.v.fv (2c2552db) and one of sf.vc.v.xv (2825c1db).
+gem5_bare_run "$BUILD/m5out-status" "$BUILD/libprint_args.so" "$BUILD/status" > "$BUILD/status.gem5.log" 2>&1; rc=$?
+float=$(grep -c '^\[commit \] insn=2c2552db ' "$BUILD/status.gem5.log"); integer=$(grep -c '^\[commit \] insn=2825c1db ' "$BUILD/status.gem5.log")
+ok=0; [ "$rc" = 0 ] && [ "$float" = 0 ] && [ "$integer" = 1 ] && ok=1
+report $ok "gem5: writing vd dirties VS, and FS off refuses only a form that reads f[rs1] (exit $rc; commits: fv $float of 0, xv $integer of 1)"
 
 echo "-- harness"
 
