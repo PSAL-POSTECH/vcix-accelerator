@@ -321,6 +321,8 @@ adapters/gem5/            what the gem5 branch does; its code is in the gem5
                           repository
 examples/print_args/      the example: a model, a program that exercises it,
                           a machine description, and a script that runs both
+examples/tpu/             a model made of units: the timing of a TPU's special-function
+                          unit and of its one-cycle instructions
 examples/gem5_se.py       the gem5 fixture the example and the tests run on
 tools/timing_probe.cc     drives a model's timing face without gem5
 tests/run.sh              every test below
@@ -329,6 +331,7 @@ tests/contract/           the rules of the interface: ownership, the machine
                           squash, a late result, processor state
 tests/pipeline/           a pipelined model overlaps instructions on gem5
 tests/print_args/         the example reaches the model once per instruction
+tests/tpu/                the tpu example's timing on gem5
 setup/                    the pinned environment: versions.env, the scripts
                           that build it, and the image
 scripts/                  build this repository; how each simulator is started

@@ -1,0 +1,2 @@
+# The tpu model reports each issue and commit.
+tpu_trace: 1
