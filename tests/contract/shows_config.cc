@@ -1,5 +1,5 @@
-// Test model: owns nothing and reports, for each key below, the value it is
-// configured with or that the key is absent; then `count` read as a number.
+// Test model: owns nothing and reports, for each key below, the value it is configured
+// with or that the key is absent; then `count` read as a decimal number and `base` as hex.
 #include <cinttypes>
 #include <cstdio>
 
@@ -26,6 +26,8 @@ class ShowsConfig : public Model {
     }
     fflush(stdout);
     printf("[number] count = %" PRIu64 "\n", config.uint("count", 5));
+    fflush(stdout);
+    printf("[number] base = 0x%" PRIx64 "\n", config.hex("base", 0x1000));
     fflush(stdout);
   }
 

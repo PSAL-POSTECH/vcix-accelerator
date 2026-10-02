@@ -95,34 +95,37 @@ configured=$(grep -c '^\[config\]' "$BUILD/config-not_a_mapping.gem5.log")
 ok=0; [ "$rc" = 1 ] && [ "$configured" = 0 ] && ok=1
 report $ok "gem5 refuses not_a_mapping.yml (exit $rc, model configured with $configured values)"
 
-# number <simulator> <value> <exit-code> <the number, or "" when the run must stop>
+# number <simulator> <key> <value> <exit-code> <what the model reads, or "" when the run must stop>
 number() {
-  local sim=$1 written=$2 rc=$3 want=$4 ok=0 got said
+  local sim=$1 key=$2 written=$3 rc=$4 want=$5 ok=0 got said
   local log="$BUILD/config-number.$sim.log"
-  got=$(grep -c '^\[number\] ' "$log")
+  got=$(grep -c "^\[number\] $key = " "$log")
   if [ -n "$want" ]; then
-    [ "$rc" = 0 ] && grep -Fxq "[number] count = $want" "$log" && ok=1
-    report $ok "$sim count: $written is $want (exit $rc)"
+    [ "$rc" = 0 ] && grep -Fxq "[number] $key = $want" "$log" && ok=1
+    report $ok "$sim $key: $written is $want (exit $rc)"
   else
-    said=$(grep -Fc "shows_config: machine description: count: '$written' " "$log")
+    said=$(grep -Fc "shows_config: machine description: $key: '$written' " "$log")
     [ "$rc" = 1 ] && [ "$got" = 0 ] && [ "$said" = 1 ] && ok=1
-    report $ok "$sim count: $written stops the run (exit $rc, reported $said, number handed on $got)"
+    report $ok "$sim $key: $written stops the run (exit $rc, reported $said, number handed on $got)"
   fi
 }
 
-# Each value as written after "count: " and what it is read as: a number, the fallback
-# 5 for an absent key, or nothing -- not a number, negative, trailing text, leading zero, too large.
-NUMBERS=('8|8' '~|5' 'abc|' '-1|' '8 cycles|' '010|' '18446744073709551616|')
+# key|value as written|what it is read as, nothing when the run must stop. count is decimal:
+# fallback 5; not a number, negative, trailing text, leading zero, too large. base is hex:
+# fallback 0x1000; no 0x, no digits, not hex digits, a capital X, too large.
+NUMBERS=('count|8|8' 'count|~|5' 'count|abc|' 'count|-1|' 'count|8 cycles|' 'count|010|' 'count|18446744073709551616|'
+         'base|0x80001000|0x80001000' 'base|0xffffffffffffffff|0xffffffffffffffff' 'base|~|0x1000' 'base|80001000|'
+         'base|0x|' 'base|0x80zz|' 'base|0X80|' 'base|0x10000000000000000|')
 for case in "${NUMBERS[@]}"; do
-  written=${case%|*}; want=${case##*|}
-  printf 'count: %s\n' "$written" > "$BUILD/config-number.yml"
+  IFS='|' read -r key written want <<< "$case"
+  printf '%s: %s\n' "$key" "$written" > "$BUILD/config-number.yml"
 
   spike_run "$SHOWS_CONFIG" "$BUILD/config-number.yml" "$BUILD/nothing" > "$BUILD/config-number.spike.log" 2>&1
-  number spike "$written" $? "$want"
+  number spike "$key" "$written" $? "$want"
 
   gem5_run "$BUILD/m5out-config-number" "$SHOWS_CONFIG" "$BUILD/config-number.yml" "$BUILD/nothing" \
     > "$BUILD/config-number.gem5.log" 2>&1
-  number gem5 "$written" $? "$want"
+  number gem5 "$key" "$written" $? "$want"
 done
 
 echo "-- model table"
