@@ -1,6 +1,6 @@
 # Test fixture for the example and the tests, not a machine description: gem5's default
 # MinorCPU pool plus the accelerator units. Exits with the program's exit code, or 1.
-# Usage: gem5.opt gem5_se.py --model M.so [--config machine.yml] [--units N] [--vlen BITS] [--max-ticks N] BINARY
+# Usage: gem5.opt gem5_se.py --model M.so [--config machine.yml] [--units N] [--max-in-flight N] [...] BINARY
 import argparse
 import sys
 
@@ -16,6 +16,7 @@ parser.add_argument("--config", help="machine description (YAML) the model is co
 parser.add_argument("--vlen", type=int, default=256)
 parser.add_argument("--max-ticks", type=int, help="stop the simulation after this many ticks")
 parser.add_argument("--units", type=int, default=1, help="accelerator units, each naming the model")
+parser.add_argument("--max-in-flight", type=int, help="each unit's vcixMaxInFlight, when not gem5's default")
 args = parser.parse_args()
 
 
@@ -43,12 +44,16 @@ def machine_description(path):
 settings = machine_description(args.config) if args.config else {}
 
 
+bound = {} if args.max_in_flight is None else {"vcixMaxInFlight": args.max_in_flight}
+
+
 class ExampleFUPool(MinorFUPool):
     funcUnits = MinorDefaultFUPool.funcUnits + [
         MinorVcixAccelFU(
             vcixModel=args.model,
             vcixConfigKeys=list(settings.keys()),
             vcixConfigValues=list(settings.values()),
+            **bound,
         )
         for _ in range(args.units)
     ]

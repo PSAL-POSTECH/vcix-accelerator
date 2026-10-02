@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # The rules of the interface, one section each: ownership, the machine description, the model
-# table, instances, processor state, and the harness the other tests stand on.
+# table, instances, instructions in flight, processor state, and the harness the tests stand on.
 # Usage: tests/contract/run.sh [build-dir [spike [pk [gem5.opt]]]]
 set -uo pipefail
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -19,7 +19,7 @@ report() {
 program() {
   rv_program "$HERE/$1.S" "$BUILD/$1" "${@:2}" || { echo "FAIL  $1.S does not build"; exit 2; }
 }
-for name in owned unowned nothing segfault returns3 pair; do program $name; done
+for name in owned unowned nothing segfault returns3 pair forty; do program $name; done
 program status -nostdlib -Wl,-N,-Ttext=0x80000000,--no-warn-rwx-segments
 
 echo "-- ownership"
@@ -230,6 +230,26 @@ for sim in spike gem5 probe; do
   ok=0; [ "$rc" = 1 ] && [ "$said" = 1 ] && [ "$called" = 0 ] && ok=1
   report $ok "$sim: a model that cannot be configured stops the run with its reason (exit $rc, reason given $said of 1, calls to the model $called)"
 done
+
+echo "-- in flight"
+
+# gem5 only. always_accepts bounds nothing itself and forty.S issues forty owned instructions
+# back to back, so what holds them back is the unit's vcixMaxInFlight: 4, then gem5's default.
+
+# most <log>: the most instructions the model was told were in flight, at any call.
+most() { sed -n 's/^\[model\] \(accept\|issue\) pending=\([0-9]*\)$/\2/p' "$1" | sort -n | tail -n 1; }
+
+log="$BUILD/in-flight-4.gem5.log"
+gem5_run "$BUILD/m5out-in-flight-4" "$BUILD/libalways_accepts.so" "" "$BUILD/forty" --max-in-flight 4 > "$log" 2>&1; rc=$?
+most=$(most "$log"); committed=$(grep -Fxc '[model] commit' "$log")
+ok=0; [ "$rc" = 0 ] && [ "${most:-none}" = 3 ] && [ "$committed" = 40 ] && ok=1
+report $ok "gem5 with vcixMaxInFlight 4 asks the model with at most three in flight and commits all forty (exit $rc, most ${most:-none}, committed $committed)"
+
+log="$BUILD/in-flight-default.gem5.log"
+gem5_run "$BUILD/m5out-in-flight-default" "$BUILD/libalways_accepts.so" "" "$BUILD/forty" > "$log" 2>&1; rc=$?
+most=$(most "$log"); committed=$(grep -Fxc '[model] commit' "$log"); overflowed=$(grep -c 'No space to push data into queue' "$log")
+ok=0; [ "$rc" = 0 ] && [ "${most:-0}" -gt 3 ] && [ "$most" -lt 64 ] && [ "$committed" = 40 ] && [ "$overflowed" = 0 ] && ok=1
+report $ok "gem5 with the default bound lets the model go past four, and its in-order queue holds them (exit $rc, most ${most:-none}, committed $committed, queue warnings $overflowed)"
 
 echo "-- processor state"
 
