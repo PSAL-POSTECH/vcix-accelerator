@@ -31,5 +31,8 @@ static inline uint32_t random32(void) {
 static inline uint32_t random_below(uint32_t bound) { return random32() % bound; }
 
 typedef unsigned long kernel(void *source, void *destination, unsigned long elements);
+// The same, with what else a kernel takes: a number that rides the instruction, and a pattern.
+typedef unsigned long kernel_with(void *source, void *destination, unsigned long elements, unsigned long number,
+                                  void *pattern);
 
 #endif

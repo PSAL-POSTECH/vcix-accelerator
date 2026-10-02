@@ -1,9 +1,10 @@
 // The systolic array: weights of fewer columns than lanes, a full matrix, a matrix that slides, pops in
-// pieces, and every element width. Output: what each pop left in every lane.
+// pieces, every element width, the two floats of 8 bits, and every rounding mode frm can hold.
+// Output: what each pop left in every lane.
 #include "common.h"
 
-kernel k_input_8, k_input_16, k_input_32, k_input_64, k_weight_8, k_weight_16, k_weight_32, k_weight_64;
-kernel k_pop_8, k_pop_16, k_pop_32, k_pop_64;
+kernel_with k_input_8, k_input_16, k_input_32, k_input_64, k_weight_8, k_weight_16, k_weight_32, k_weight_64;
+kernel_with k_pop_8, k_pop_16, k_pop_32, k_pop_64;
 void k_compute(void);
 
 #define IN 0ul
@@ -28,15 +29,31 @@ static void fill(unsigned bytes, unsigned long count, int scale) {
       if (bytes == 8) *(double *)spad(lane, IN + 8 * i) = sixteenths / 16.0;
     }
 }
-static void push(kernel *function, unsigned bytes, unsigned long count, int scale) {
-  fill(bytes, count, scale);
-  if (function(spad(0, IN), 0, count) != count) puts("a push did not take every element");
+// What an element of 8 bits is, as the push or the pop carries it; 0 and 3 are integers.
+enum { INTEGER = 0, E4M3 = 1, E5M2 = 2, UNKNOWN = 3 };
+static void push_as(kernel_with *function, unsigned long count, unsigned format) {
+  if (function(spad(0, IN), 0, count, format, 0) != count) puts("a push did not take every element");
 }
-static void pop(kernel *function, unsigned bytes, unsigned long count) {
+static void push(kernel_with *function, unsigned bytes, unsigned long count, int scale) {
+  fill(bytes, count, scale);
+  push_as(function, count, INTEGER);
+}
+static void pop_as(kernel_with *function, unsigned long count, unsigned format) {
   for (unsigned lane = 0; lane < LANES; lane++) memset(spad(lane, OUT), 0xA5, 64);
-  if (function(0, spad(0, OUT), count) != count) puts("a pop did not take every element");
+  if (function(0, spad(0, OUT), count, format, 0) != count) puts("a pop did not take every element");
   emit_lanes(OUT, 64);
 }
+static void pop(kernel_with *function, unsigned bytes, unsigned long count) { pop_as(function, count, INTEGER); }
+// Bytes that are finite in both floats of 8 bits when `finite`, any bytes otherwise.
+static void fill_bytes(unsigned long count, int finite) {
+  for (unsigned lane = 0; lane < LANES; lane++)
+    for (unsigned long i = 0; i < count; i++) {
+      uint8_t byte = (uint8_t)random32();
+      while (finite && ((byte & 0x7c) == 0x7c || (byte & 0x7f) == 0x7f)) byte = (uint8_t)random32();
+      *(uint8_t *)spad(lane, IN + i) = byte;
+    }
+}
+static void set_frm(unsigned long mode) { __asm__ volatile("csrw frm, %0" : : "r"(mode)); }
 
 int main(void) {
   // Two columns of weights: a lane's output is two products.
@@ -77,5 +94,41 @@ int main(void) {
   push(k_weight_64, 8, 1, 64);
   push(k_input_64, 8, 2, 64);
   pop(k_pop_32, 4, 2);
+
+  // The floats of 8 bits. Finite weights and inputs of each kind, read back as each kind and as halves and singles.
+  for (unsigned format = E4M3; format <= E5M2; format++) {
+    fill_bytes(4, 1);
+    push_as(k_weight_8, 4, format);
+    fill_bytes(16, 1);
+    push_as(k_input_8, 16, format);
+    pop_as(k_pop_8, 4, format);
+    pop_as(k_pop_8, 4, format == E4M3 ? E5M2 : E4M3);
+    pop_as(k_pop_16, 4, format);
+    pop_as(k_pop_32, 4, format);
+    // Any bytes: infinities and NaNs go in too.
+    fill_bytes(8, 0);
+    push_as(k_input_8, 8, format);
+    pop_as(k_pop_8, 8, format);
+  }
+  // A number that names no kind is an integer, in and out.
+  fill(1, 4, 48);
+  push_as(k_weight_8, 4, UNKNOWN);
+  fill(1, 4, 48);
+  push_as(k_input_8, 4, UNKNOWN);
+  pop_as(k_pop_8, 4, UNKNOWN);
+
+  // A pop to fewer bits rounds by frm: every value frm can hold, small sums and sums past the largest of each kind.
+  for (unsigned long mode = 0; mode < 8; mode++)
+    for (int scale = 40; scale <= 2047; scale += 2007) {
+      push(k_weight_32, 4, 4, scale);
+      push(k_input_32, 4, 16, scale);
+      push(k_input_32, 4, 16, scale);
+      set_frm(mode);
+      pop_as(k_pop_16, 8, INTEGER);
+      pop_as(k_pop_8, 8, E4M3);
+      pop_as(k_pop_8, 8, E5M2);
+      pop_as(k_pop_8, 8, INTEGER);
+      set_frm(0);
+    }
   return 0;
 }

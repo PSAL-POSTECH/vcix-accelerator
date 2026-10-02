@@ -27,14 +27,16 @@ A unit is a plain copyable class with the methods of the timing face
 ## The functional face
 
 `tpu::Functional` does what the Spike these units came from did
-(riscv-isa-sim 9f555b4, the units built in), in every lane:
+(riscv-isa-sim branch `spike-fp8`, 7259e73, the units built in; the DMA as of
+9f555b4, without the element type that branch added to the descriptor), in
+every lane:
 
 | Instructions | What they do |
 |---|---|
 | `verf`, `vtanh`, `vsin`, `vcos`, `vlog`, `vatan`, `vexp` | `vd[i] = f(vs2[i])` on halves and singles, and on doubles for `vlog` and `vatan` |
 | `vlane_idx` | every element of `vd` is its lane's number, written as 64 bits whatever the element width |
-| systolic weight push, input push, pop; `compute` | a weight push adds a column to the matrix, of which a lane keeps its last `lanes` weights; an input push multiplies at once, element `i` of every lane being one input vector; a pop takes the results; `compute` does nothing |
-| `xlu_push`, `xlu_push_pattern`, `xlu_pop` | a tile of raw 32-bit values is pushed; the first pop after a push moves it across the lanes as the field at 19:15 of the push says ([4:3] the lanes shuffled before, [2] depth and lane exchanged, [1:0] the lanes shuffled after) |
+| systolic weight push, input push, pop; `compute` | a weight push adds a column to the matrix, of which a lane keeps its last `lanes` weights; an input push multiplies at once, element `i` of every lane being one input vector; a pop takes the results; `compute` does nothing. Elements are singles, halves or 8 bits wide; what 8 bits are rides the instruction in its rs1 field: 1 an E4M3 float, 2 an E5M2 float, anything else an integer. A pop to halves or to 8-bit floats rounds by `frm`, which the model reads through the host |
+| `xlu_push`, `xlu_push_pattern`, `xlu_pop` | a tile of raw 32-bit values is pushed; the first pop after a push moves it across the lanes as the field at 19:15 of the push says ([4:3] the lanes shuffled before, [2] depth and lane exchanged, [1:0] the lanes shuffled after). A shuffle is none (0), every lane reading lane 0 (1), or every lane reading the lane a pattern names (2). The pattern of the shuffle before comes with `xlu_push_pattern`; the one of the shuffle after is loaded by an `xlu_push` whose [4:3] is 3 |
 | `dma_config_desc`, `mvin`, `mvin2`, `mvin3`, `mvout` | a tensor of up to four dimensions between memory and the scratchpad, as the descriptor says: a mask, skip axes, a fill value, a bound on memory, an accumulating `mvout`, indices |
 
 It finds an instruction by the names the units give their encodings, so an
@@ -45,14 +47,16 @@ and is not touched by the timing face.
 Where the old Spike trapped, asserted or read past a buffer, the model ends
 the run with a line on standard error (`tpu: ...`, exit 1): a special function
 on a width it has no form for, a pop of more than was computed, an input push
-before any weight, the cross-lane operation 0, a descriptor with a dimension of
-0 or one that reaches past its tensor. A transfer past the end of a lane's
-scratchpad ends the run with exit 200, as before.
+before any weight, a descriptor with a dimension of 0 or one that reaches past
+its tensor. As before, a transfer past the end of a lane's scratchpad ends the
+run with exit 200, and a cross-lane shuffle whose pattern is not as wide as
+its tile with exit 201.
 
 Not carried over: what the old Spike printed under `SPIKE_DEBUG` and
 `SPIKE_XLU_DEBUG`, and the list of all-zero tiles it wrote under
-`SPIKE_DUMP_SPARSE_TILE`. Halves are rounded to nearest even; the old Spike
-used the rounding mode the last floating-point instruction left.
+`SPIKE_DUMP_SPARSE_TILE`. A special function rounds its halves to nearest
+even; the old Spike used the rounding mode the last floating-point instruction
+left.
 
 `tests/tpu/functional/run.sh` checks it on Spike: each program prints what its
 instructions left, and the checksums in `from-old-spike.sha256` are of what the

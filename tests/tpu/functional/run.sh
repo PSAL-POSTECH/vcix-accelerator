@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # The functional face of the tpu example, on Spike. Each program prints what its instructions left in the
 # registers, the scratchpad and memory; from-old-spike.sha256 is what the Spike these units came from printed
-# (riscv-isa-sim 9f555b4, the units built in), so a PASS says the model does what that Spike did.
+# (riscv-isa-sim branch spike-fp8, 7259e73, the units built in), so a PASS says the model does what that Spike did.
 # Called by tests/tpu/run.sh. Usage: tests/tpu/functional/run.sh <build-dir> <spike> <pk> [old spike]
 #   With an old spike, each program is also run on it and the two outputs are compared byte by byte.
 set -uo pipefail
@@ -73,16 +73,10 @@ same() {
 
 echo "-- as the old Spike did it"
 same special from-old-spike.sha256 "the seven special functions: every half, 4096 singles a lane, 1024 doubles a lane for vlog and vatan" -- special
-same systolic from-old-spike.sha256 "the systolic array: weights that slide, pops in pieces, every element width" -- systolic
+same systolic from-old-spike.sha256 "the systolic array: weights that slide, pops in pieces, every element width, both floats of 8 bits, every value of frm" -- systolic
 same lanes from-old-spike.sha256 "vlane_idx at every element width" -- cross_lane lanes
-same cross from-old-spike.sha256 "the cross-lane unit: transpose, all-gather and broadcast" -- cross_lane plain 4 5 8
-same permute from-old-spike.sha256 "the cross-lane unit: permute, with its pattern" -- cross_lane pattern 16
+same cross from-old-spike.sha256 "the cross-lane unit: each of its 24 operations, with the patterns it reads" -- cross_lane 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23
 same dma from-old-spike.sha256 "the DMA: 300 descriptors, an mvin and an mvout each, and the indices of the indirect ones" --base-path -- dma 0 300
-
-# The old Spike decodes four operations of the cross-lane unit; the rest were checked once against its source.
-echo "-- as the old unit's source did it"
-same cross-all from-model.sha256 "the cross-lane unit: every operation without a pattern" -- cross_lane plain 1 2 4 5 6 8 9 10 12 13 14 16 17 18 20 21 22
-same permute-all from-model.sha256 "the cross-lane unit: every operation with a pattern" -- cross_lane pattern 1 2 4 5 6 8 9 10 12 13 14 16 17 18 20 21 22
 
 # refused <which> <exit> <text>: the run ends there, with this on standard error.
 refused() {
@@ -95,7 +89,7 @@ echo "-- what the model does not carry out"
 refused doubles 1 "tpu: vexp: an element of 64 bits is not supported"
 refused pop 1 "tpu: systolic pop: 1 elements asked, 0 computed"
 refused input 1 "tpu: systolic input push: no weight was pushed before it"
-refused operation 1 "tpu: cross-lane push: 0 is not an operation of the unit"
+refused pattern 201 "XLU ERROR: the pre stage walks 1 columns but lane 0 carries 0 pattern entries (SIMM5 16)"
 refused overflow 200 "MVIN ERROR: Scratchpad address overflow: 0xd0080000"
 refused indices 1 "tpu: mvin: an indirect transfer writes its indices under --base-path, and none was given"
 

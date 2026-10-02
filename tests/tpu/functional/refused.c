@@ -1,7 +1,8 @@
 // What the model cannot carry out, one per run. Usage: refused <which>
 #include "common.h"
 
-kernel k_vexp_64, k_pop_32, k_input_32, k_cross_push_0_32;
+kernel k_vexp_64, k_cross_pop_32;
+kernel_with k_pop_32, k_input_32, k_cross_push_32;
 
 // One row of four words along the split axis, a word per lane.
 static struct {
@@ -26,11 +27,12 @@ int main(int argc, char **argv) {
   if (!strcmp(which, "doubles")) {            // a special function without a form for doubles
     k_vexp_64(spad(0, 0), spad(0, 4096), 1);
   } else if (!strcmp(which, "pop")) {         // a pop of what was never computed
-    k_pop_32(0, spad(0, 0), 1);
+    k_pop_32(0, spad(0, 0), 1, 0, 0);
   } else if (!strcmp(which, "input")) {       // an input with no weights
-    k_input_32(spad(0, 0), 0, 1);
-  } else if (!strcmp(which, "operation")) {   // the cross-lane operation 0
-    k_cross_push_0_32(spad(0, 0), 0, 1);
+    k_input_32(spad(0, 0), 0, 1, 0, 0);
+  } else if (!strcmp(which, "pattern")) {     // a shuffle by a pattern that was never given
+    k_cross_push_32(spad(0, 0), 0, 1, 16, 0);
+    k_cross_pop_32(0, spad(0, 0), 1);
   } else if (!strcmp(which, "overflow")) {    // a transfer to the end of a lane's scratchpad
     DMA(7, &row, &row);
     DMA(2, memory, spad(0, LANE_BYTES));
@@ -42,7 +44,7 @@ int main(int argc, char **argv) {
     DMA(7, &row, &row);
     DMA(2, memory, spad(0, 0));
   } else {
-    puts("usage: refused doubles | pop | input | operation | overflow | indices");
+    puts("usage: refused doubles | pop | input | pattern | overflow | indices");
     return 2;
   }
   puts("it ran");

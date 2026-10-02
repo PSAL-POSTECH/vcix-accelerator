@@ -1,4 +1,4 @@
-// The functional face of the tpu model: what each instruction does to the registers and to memory, as the Spike these units came from did it (riscv-isa-sim 9f555b4, riscv/insns/torchsim_*.h).
+// The functional face of the tpu model: what each instruction does to the registers and to memory, as the Spike these units came from did it (riscv-isa-sim branch spike-fp8, 7259e73, riscv/insns/torchsim_*.h; the DMA as of 9f555b4).
 #ifndef TPU_FUNCTIONAL_HPP
 #define TPU_FUNCTIONAL_HPP
 
@@ -70,6 +70,73 @@ inline uint16_t double_to_half(double value) {
   if (significand < 1024) return sign | significand;
   return sign | static_cast<uint16_t>((exponent + 15) << 10) | (significand - 1024);
 }
+// A float of fewer bits than a single: a half, or one of the two of 8 bits. E4M3 has no infinity; what is too
+// large for it becomes S.1111.111, which is also its NaN.
+struct Narrow {
+  int fraction_bits, exponent_bits;
+  bool infinity;
+};
+constexpr Narrow HALF{10, 5, true}, E4M3{3, 4, false}, E5M2{2, 5, true};
+
+// `value` as `to`, rounded as SoftFloat for RISC-V rounds under the mode `frm` holds: 0 to nearest even,
+// 1 toward zero, 2 down, 3 up, 4 to nearest away, 5 to odd (toward zero, the last bit set when anything was
+// lost); 6 and 7 toward zero. Every NaN is the default NaN.
+inline uint32_t narrow(float value, const Narrow &to, uint64_t mode) {
+  uint32_t bits;
+  std::memcpy(&bits, &value, sizeof bits);
+  const bool negative = bits >> 31;
+  const uint32_t exponent = (bits >> 23) & 0xff, fraction = bits & 0x7fffff;
+  const int bias = (1 << (to.exponent_bits - 1)) - 1, largest = to.infinity ? bias : bias + 1;
+  const uint32_t sign = static_cast<uint32_t>(negative) << (to.exponent_bits + to.fraction_bits);
+  const uint32_t ones = ((1u << to.exponent_bits) - 1) << to.fraction_bits, hidden = 1u << to.fraction_bits;
+  const uint32_t too_large = to.infinity ? ones : ones | (hidden - 1);
+  if (exponent == 0xff) return fraction ? (to.infinity ? ones | hidden >> 1 : too_large) : sign | too_large;
+  if (!exponent && !fraction) return sign;
+
+  // The magnitude is significand x 2^scale; `top` is the exponent of its leading bit.
+  const uint64_t significand = exponent ? fraction | 0x800000 : fraction;
+  const int scale = static_cast<int>(exponent ? exponent : 1) - 127 - 23;
+  int top = scale + 23;
+  for (uint64_t rest = significand; rest < 0x800000; rest <<= 1) top--;
+  // In units of the last place at exponent `at`: `kept` of them, and `below` against `half` of one.
+  int at = top < 1 - bias ? 1 - bias : top;
+  const int shift = at - to.fraction_bits - scale;
+  const uint64_t kept = shift < 40 ? significand >> shift : 0;
+  const uint64_t below = shift < 40 ? significand & ((uint64_t{1} << shift) - 1) : significand;
+  const uint64_t half = uint64_t{1} << (shift < 40 ? shift - 1 : 40);
+  // Whether this mode ever rounds a value of this sign away from zero, and whether it does so here.
+  const bool away = mode == 0 || mode == 4 || (mode == 2 && negative) || (mode == 3 && !negative);
+  bool up = false;
+  if (mode == 0) up = below > half || (below == half && (kept & 1));
+  if (mode == 4) up = below >= half;
+  if (mode == 2 || mode == 3) up = away && below != 0;
+  uint32_t rounded = static_cast<uint32_t>(kept) + up;
+  if (mode == 5 && below != 0) rounded |= 1;
+  if (rounded == hidden << 1) {
+    rounded = hidden;
+    at++;
+  }
+  if (at > largest || (!to.infinity && at == largest && rounded == (hidden << 1) - 1)) return sign | (too_large - !away);
+  if (rounded < hidden) return sign | rounded;
+  return sign | static_cast<uint32_t>(at + bias) << to.fraction_bits | (rounded - hidden);
+}
+// A float of 8 bits as a single, which holds every one of them exactly.
+inline float fp8_to_float(uint8_t byte, const Narrow &from) {
+  const uint32_t hidden = 1u << from.fraction_bits;
+  const uint32_t exponent = (byte & 0x7f) >> from.fraction_bits, fraction = byte & (hidden - 1);
+  const bool all_ones = exponent == (1u << from.exponent_bits) - 1;
+  float value;
+  if (from.infinity ? all_ones : (byte & 0x7f) == 0x7f) {
+    const uint32_t bits = !from.infinity || fraction ? 0x7fc00000u : (byte & 0x80 ? 0xff800000u : 0x7f800000u);
+    std::memcpy(&value, &bits, sizeof value);
+    return value;
+  }
+  const int bias = (1 << (from.exponent_bits - 1)) - 1;
+  value = std::ldexp(static_cast<float>(exponent ? fraction | hidden : fraction),
+                     static_cast<int>(exponent ? exponent : 1) - bias - from.fraction_bits);
+  return byte & 0x80 ? -value : value;
+}
+
 // The sum of two halves is exact in a double, so this rounds once.
 inline uint16_t half_add(uint16_t a, uint16_t b) {
   return double_to_half(static_cast<double>(half_to_float(a)) + static_cast<double>(half_to_float(b)));
@@ -98,7 +165,8 @@ class Functional {
     sa_weight_.clear();
     sa_ready_ = 0;
     xlu_in_.clear();
-    xlu_pattern_.clear();
+    xlu_before_.clear();
+    xlu_after_.clear();
     xlu_out_.clear();
     xlu_depth_ = 0;
     xlu_operation_ = 0;
@@ -218,9 +286,15 @@ class Functional {
 
   // ---- The systolic array: a matrix of weights times each pushed input vector, a float per lane.
   using Queues = std::vector<std::deque<float>>;
+  // What an element of 8 bits is rides the push or the pop, in its rs1 field: 1 an E4M3, 2 an E5M2, anything else an integer.
+  static const Narrow *systolic_fp8(const Insn &insn) {
+    return vcix_accel::rs1(insn) == 1 ? &E4M3 : vcix_accel::rs1(insn) == 2 ? &E5M2 : nullptr;
+  }
   static float systolic_element(const Host &host, const Insn &insn, uint32_t lane, uint32_t reg, uint32_t i) {
     switch (insn.sew_bits) {
-      case 8: return static_cast<float>(get<int8_t>(host, lane, reg, i));
+      case 8:
+        if (const Narrow *format = systolic_fp8(insn)) return fp8_to_float(get<uint8_t>(host, lane, reg, i), *format);
+        return static_cast<float>(get<int8_t>(host, lane, reg, i));
       case 16: return half_to_float(get<uint16_t>(host, lane, reg, i));
       case 32: return get<float>(host, lane, reg, i);
       default: return 0.0f;
@@ -270,8 +344,10 @@ class Functional {
     }
     sa_ready_ += insn.vl;
   }
+  // A pop to fewer bits rounds by frm.
   void systolic_pop(const Host &host, const Insn &insn) {
     systolic_size(host);
+    const uint64_t mode = host.csr(CSR_FRM);
     if (sa_ready_ < insn.vl)
       fail("systolic pop: %u elements asked, %llu computed", insn.vl, static_cast<unsigned long long>(sa_ready_));
     const uint32_t vd = vcix_accel::rd(insn);
@@ -281,8 +357,13 @@ class Functional {
         const float value = sa_output_[lane].front();
         sa_output_[lane].pop_front();
         switch (insn.sew_bits) {
-          case 8: put<int8_t>(host, lane, vd, i, static_cast<int8_t>(value)); break;
-          case 16: put<uint16_t>(host, lane, vd, i, double_to_half(value)); break;
+          case 8:
+            if (const Narrow *format = systolic_fp8(insn))
+              put<uint8_t>(host, lane, vd, i, static_cast<uint8_t>(narrow(value, *format, mode)));
+            else
+              put<int8_t>(host, lane, vd, i, static_cast<int8_t>(value));
+            break;
+          case 16: put<uint16_t>(host, lane, vd, i, static_cast<uint16_t>(narrow(value, HALF, mode))); break;
           default: put<float>(host, lane, vd, i, value); break;
         }
       }
@@ -292,8 +373,10 @@ class Functional {
   // ---- The cross-lane unit: a tile is pushed a register at a time, and the first pop after a push moves it
   // across the lanes. It carries 32 raw bits per element and does no arithmetic. The field at 19:15 of the push
   // says what to do: [4:3] the lanes shuffled before, [2] depth and lane exchanged, [1:0] the lanes shuffled after.
+  // A push whose [4:3] is 3 pushes no tile: it loads the pattern of the shuffle after.
   using Tile = std::vector<std::vector<uint32_t>>;
-  enum Shuffle : uint32_t { BYPASS = 0, REPLICATE = 1, ARBITRARY = 2 };
+  enum Shuffle : uint32_t { BYPASS = 0, REPLICATE = 1, ARBITRARY = 2, LOAD = 3 };
+  static constexpr int INVALID_XLU_PATTERN = 201;  // the exit code of a shuffle whose pattern is not as wide as its tile
   static uint32_t xlu_element(const Host &host, const Insn &insn, uint32_t lane, uint32_t reg, uint32_t i) {
     switch (insn.sew_bits) {
       case 8: return get<uint8_t>(host, lane, reg, i);
@@ -305,44 +388,55 @@ class Functional {
   void xlu_size(const Host &host) {
     if (xlu_in_.size() == host.lanes()) return;
     xlu_in_.assign(host.lanes(), {});
-    xlu_pattern_.assign(host.lanes(), {});
+    xlu_before_.assign(host.lanes(), {});
+    xlu_after_.assign(host.lanes(), {});
     xlu_out_.assign(host.lanes(), {});
   }
-  void xlu_begin_push(const Host &host, const Insn &insn) {
+  void xlu_push(const Host &host, const Insn &insn) {
     xlu_size(host);
     const uint32_t operation = vcix_accel::rs1(insn);
-    if (operation == 0 || (operation >> 3) > ARBITRARY || (operation & 3) > ARBITRARY)
-      fail("cross-lane push: %u is not an operation of the unit", operation);
+    if (operation >> 3 == LOAD) {
+      // A lane number of 32 bits per element, whatever the element width.
+      for (uint32_t lane = 0; lane < host.lanes(); lane++)
+        for (uint32_t i = 0; i < insn.vl; i++)
+          xlu_after_[lane].push_back(get<uint32_t>(host, lane, vcix_accel::rs2(insn), i));
+      return;
+    }
     xlu_operation_ = operation;
-  }
-  void xlu_push(const Host &host, const Insn &insn) {
-    xlu_begin_push(host, insn);
     for (uint32_t lane = 0; lane < host.lanes(); lane++)
       for (uint32_t i = 0; i < insn.vl; i++)
         xlu_in_[lane].push_back(xlu_element(host, insn, lane, vcix_accel::rs2(insn), i));
     xlu_depth_ += insn.vl;
   }
-  // The pattern is in the register the rd field names: a lane number of 32 bits per element.
+  // The pattern of the shuffle before is in the register the rd field names: a lane number of 32 bits per element.
   void xlu_push_pattern(const Host &host, const Insn &insn) {
-    xlu_begin_push(host, insn);
+    xlu_size(host);
+    xlu_operation_ = vcix_accel::rs1(insn);
     for (uint32_t lane = 0; lane < host.lanes(); lane++)
       for (uint32_t i = 0; i < insn.vl; i++) {
         xlu_in_[lane].push_back(xlu_element(host, insn, lane, vcix_accel::rs2(insn), i));
-        xlu_pattern_[lane].push_back(get<uint32_t>(host, lane, vcix_accel::rd(insn), i));
+        xlu_before_[lane].push_back(get<uint32_t>(host, lane, vcix_accel::rd(insn), i));
       }
     xlu_depth_ += insn.vl;
   }
-  // Every lane reads some lane's row: lane 0 for REPLICATE, the lane its pattern names for ARBITRARY (itself without a pattern). What is missing reads as 0.
-  static Tile xlu_shuffle(uint32_t what, const Tile &tile, const Tile &pattern) {
+  // Every lane reads some lane's row: the lane its pattern names for ARBITRARY, which needs a lane number per
+  // column, and lane 0 otherwise. What is missing reads as 0.
+  Tile xlu_shuffle(uint32_t what, const Tile &tile, const Tile &pattern, const char *stage) const {
     if (what == BYPASS) return tile;
     const size_t lanes = tile.size();
     size_t width = 0;
     for (const std::vector<uint32_t> &row : tile) width = row.size() > width ? row.size() : width;
+    if (what == ARBITRARY)
+      for (size_t lane = 0; lane < lanes; lane++)
+        if (pattern[lane].size() != width) {
+          std::fprintf(stderr, "XLU ERROR: the %s stage walks %zu columns but lane %zu carries %zu pattern entries (SIMM5 %u)\n",
+                       stage, width, lane, pattern[lane].size(), xlu_operation_);
+          std::exit(INVALID_XLU_PATTERN);
+        }
     Tile got(lanes);
     for (size_t lane = 0; lane < lanes; lane++)
       for (size_t k = 0; k < width; k++) {
-        size_t from = 0;
-        if (what == ARBITRARY) from = k < pattern[lane].size() ? pattern[lane][k] : lane;
+        const size_t from = what == ARBITRARY ? pattern[lane][k] : 0;
         got[lane].push_back(from < lanes && k < tile[from].size() ? tile[from][k] : 0u);
       }
     return got;
@@ -355,20 +449,23 @@ class Functional {
       for (size_t lane = 0; lane < lanes; lane++) got[k].push_back(k < tile[lane].size() ? tile[lane][k] : 0u);
     return got;
   }
+  // Both patterns are taken whether or not the operation reads them.
   void xlu_run() {
     const size_t lanes = xlu_in_.size();
-    Tile tile(lanes), pattern(lanes);
+    Tile tile(lanes), before(lanes), after(lanes);
     for (size_t lane = 0; lane < lanes; lane++) {
       for (uint64_t k = 0; k < xlu_depth_ && !xlu_in_[lane].empty(); k++) {
         tile[lane].push_back(xlu_in_[lane].front());
         xlu_in_[lane].pop_front();
       }
-      pattern[lane].assign(xlu_pattern_[lane].begin(), xlu_pattern_[lane].end());
-      xlu_pattern_[lane].clear();
+      before[lane].assign(xlu_before_[lane].begin(), xlu_before_[lane].end());
+      xlu_before_[lane].clear();
+      after[lane].assign(xlu_after_[lane].begin(), xlu_after_[lane].end());
+      xlu_after_[lane].clear();
     }
-    Tile got = xlu_shuffle(xlu_operation_ >> 3, tile, pattern);
+    Tile got = xlu_shuffle(xlu_operation_ >> 3, tile, before, "pre");
     if (xlu_operation_ & 4) got = xlu_cross(got, xlu_depth_);
-    got = xlu_shuffle(xlu_operation_ & 3, got, pattern);
+    got = xlu_shuffle(xlu_operation_ & 3, got, after, "post");
     // What the last pop did not take is not this tile's: it is replaced.
     for (size_t lane = 0; lane < lanes; lane++) xlu_out_[lane].assign(got[lane].begin(), got[lane].end());
     xlu_depth_ = 0;
@@ -648,6 +745,8 @@ class Functional {
     return t.address[position];
   }
 
+  static constexpr uint32_t CSR_FRM = 0x002;
+
   static constexpr const char *SPAD_LANE_KEY = "vpu_spad_size_kb_per_lane";
   static constexpr const char *SPAD_BASE_KEY = "vpu_spad_base_vaddr";
   static constexpr const char *BASE_PATH_KEY = "run_base_path";  // the simulator's --base-path
@@ -660,7 +759,7 @@ class Functional {
   Queues sa_weight_;  // per lane, its row of the matrix; empty until the first weight push
   uint64_t sa_ready_ = 0;
 
-  std::vector<std::deque<uint32_t>> xlu_in_, xlu_pattern_, xlu_out_;
+  std::vector<std::deque<uint32_t>> xlu_in_, xlu_before_, xlu_after_, xlu_out_;
   uint64_t xlu_depth_ = 0;  // elements pushed per lane since the last pop ran
   uint32_t xlu_operation_ = 0;
 
