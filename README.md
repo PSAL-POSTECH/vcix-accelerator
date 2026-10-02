@@ -1,8 +1,10 @@
 # vcix-accelerator
 
 A third-party accelerator model interface for RISC-V simulators, built on the
-observation that a VCIX coprocessor talks to the core through one channel only:
-VCIX instructions.
+observation that such an accelerator talks to the core through one channel
+only: custom instructions. Two opcodes go to the model: custom-2, read by the
+operand rules of VCIX (SiFive's Vector Coprocessor Interface, which gives the
+project its name), and custom-1, read as R-type on integer registers.
 
 ## Goal
 
@@ -10,30 +12,37 @@ A user who wants to add a new accelerator writes **one shared library** that
 describes both what the accelerator computes and how long it takes. They do not
 patch Spike, and they do not patch gem5.
 
-Today, adding a unit means editing two simulators by hand, in two different
-styles:
+Without this, adding a unit means editing two simulators by hand, in two
+different styles:
 
 - **Spike** (functional): a `DECLARE_INSN` in `encoding.h`, a body in
   `insns/*.h`, and unit state stored as members of `processor_t`.
 - **gem5** (timing): a custom `OpClass`, a decoder entry per encoding, a
   functional unit class, and a branch in `Execute::issue` of the MinorCPU.
-  The gem5 branch used here starts over from upstream gem5 and carries none of
-  that: it knows that VCIX instructions exist, and nothing about any unit.
 
 The two descriptions drift apart. In the tree this work started from, the
 cross-lane unit exists in Spike and has no decoder entry in gem5 at all.
 
 ## Design
 
-Each simulator is modified **once**, to forward the VCIX opcode space to a
-loaded model. After that, a new accelerator is a new `.so`.
+Each simulator gets an adapter, written once, that hands these instructions to
+a loaded model. After that, a new accelerator is a new `.so`.
 
 ```
 user model (.so)      includes one header; knows nothing about Spike or gem5
 --------------------  C ABI: a struct of function pointers
-Spike adapter         one extension that claims the VCIX encodings the model owns
-gem5 adapter          one generic decode entry, one OpClass, one functional unit
+Spike adapter         one extension that registers the encodings the model owns
+gem5 adapter          two decode entries, one OpClass, one functional unit class
 ```
+
+- **Spike is not modified.** The adapter is an extension Spike loads with
+  `--extlib`. It is built against the Spike fork pinned in
+  `setup/versions.env`, whose vector unit has lanes.
+- **gem5 is modified once**, in a branch that starts over from upstream gem5.
+  It has a decode entry for each of the two opcodes, one `OpClass`
+  (`VcixAccel`), one functional unit class (`MinorVcixAccelFU`), and code in
+  the MinorCPU's `Execute` that asks the model at issue and tells it at commit.
+  None of it is about a particular accelerator.
 
 A model has two faces, and each simulator calls only its own:
 
@@ -42,10 +51,11 @@ A model has two faces, and each simulator calls only its own:
 | Functional | Spike     | `execute`                             | what values the instruction produces |
 | Timing     | gem5      | `can_accept`, `latency`, `commit`     | whether the unit can take the instruction now, when its result is ready, and what the unit's state is afterwards |
 
-Stall and latency are delegated to the model. On the gem5 side the accelerator
-is a single custom unit with unit operation and issue latency; the model keeps
-whatever internal structure it needs (several sub-units, queues, pipelines)
-behind that one unit.
+Stall and latency are delegated to the model. gem5 has one functional unit
+class for all of these instructions, and a unit of that class names the model.
+An accepted instruction does not occupy the unit, so the model keeps whatever
+internal structure it needs (several sub-units, queues, pipelines) and decides
+how many instructions overlap.
 
 **On gem5 only MinorCPU is supported.** The other CPU models do not ask the
 model, and what they do instead is wrong rather than an error: see
@@ -79,7 +89,7 @@ into one `.so`. It needs neither simulator's source tree.
 
 | Method | Called by | You say |
 |---|---|---|
-| `name()` | both | the model's name |
+| `name()` | the wrapper | the model's name; it is printed when the machine description is refused, and neither adapter reads it |
 | `owns()` | both | the `{match, mask}` encodings that belong to this model |
 | `configure(config)` | both | nothing; read the machine's numbers by key (need not be overridden) |
 | `execute(host, insn)` | Spike | what the instruction does to registers and memory, through `host` |
@@ -100,17 +110,16 @@ encoding, must stay valid as long as the library is loaded; string literals do.
 What `config.get` returns is valid only until `configure` returns, so a model
 copies what it wants to keep.
 
-`config.get("key")` returns
-the value of a top-level key of the machine description, as written there, or
-nothing if the key is absent. "As written" is the scalar's text with no typing
-applied: `010` arrives as the text `010`. "Absent" covers a key the file does
-not have, a key whose value is YAML null (`k:`, `k: ~`, `k: null`) and a key
-whose value is not a scalar; `k: ""` is present, with empty text. The rule is
-stated once, at `vcix_config` in `include/vcix_accel.h`, and
-`tests/contract` holds both simulators to it. The model never sees the file: the
-adapters read it, and both simulators hand the model the same values. This
-repository defines no configuration format of its own; the file is the machine
-description a setup already has.
+`config.get("key")` returns the value of a top-level key of the machine
+description, as written there, or nothing if the key is absent. "As written" is
+the scalar's text with no typing applied: `010` arrives as the text `010`.
+"Absent" covers a key the file does not have, a key whose value is YAML null
+(`k:`, `k: ~`, `k: null`) and a key whose value is not a scalar; `k: ""` is
+present, with empty text. `tests/contract` holds both simulators to this rule.
+The model never sees the file. On Spike the adapter reads it; on gem5 the
+config script reads it and passes keys and values as parameters, so gem5 parses
+no file. This repository defines no configuration format of its own; the file
+is the machine description a setup already has.
 
 `config.uint("key", fallback)` reads a value as an unsigned decimal number. The
 fallback is for an absent key only. A value that is present and is not such a
@@ -189,24 +198,26 @@ Not code, only where the model is:
 `MinorVcixAccelFU` is defined in the gem5 branch, beside gem5's own units. A
 machine's CPU config stays wherever it already lives and gains that one unit;
 this repository keeps no CPU config of its own. `examples/gem5_se.py` is only a
-fixture for running the examples: gem5's default pool plus the one unit.
+fixture, for the example and the tests: gem5's default pool plus the one unit.
 
 ## Constraints the interface is built around
 
 - **The timing face cannot see data.** gem5 does not compute vector values for
   these instructions, so the timing face may depend only on the instruction
-  (its bits, `vl`, SEW, LMUL) and on state the model tracks itself in `commit` (for example, how many
-  pushes a queue has taken). Data-dependent latency is out of scope.
+  (its bits, `vl`, SEW, LMUL) and on state the model tracks itself in `commit`
+  (for example, how many pushes a queue has taken). Data-dependent latency is
+  out of scope.
 - **The two faces run in different processes.** A Spike run and a gem5 run share
   nothing at run time. Functional state and timing state live in the same model
   class but must not depend on each other.
-- **The boundary is a C ABI.** Spike does not install its headers, and a model
-  that subclasses simulator types would have to be built against both simulator
+- **The boundary is a C ABI.** Spike installs the headers of fesvr and of its
+  MMIO plug-in interface, not the ones an extension needs, and a model that
+  subclasses simulator types would have to be built against both simulator
   source trees. A plain C boundary keeps the model independent of both, and
   leaves room for models written in other languages. `include/vcix_accel.h` is
   the contract for such a model and for an adapter: which members of the table
   may be NULL, how long each string lives, and what the machine description
-  hands over are stated there and nowhere else.
+  hands over.
 
 ## Non-goals
 
@@ -214,43 +225,51 @@ fixture for running the examples: gem5's default pool plus the one unit.
   model separately.
 - Modelling memory transfers (DMA) in gem5. Their timing is owned by the
   system-level simulator downstream.
-- Any accelerator interface other than VCIX.
+- Any channel between core and accelerator other than the two custom opcodes.
 
 ## Layout
 
 ```
-include/vcix_accel.h      the C ABI: vcix_model, vcix_host, vcix_encoding
+include/vcix_accel.h      the C ABI: vcix_model, vcix_insn, vcix_pending,
+                          vcix_config, vcix_host, vcix_encoding
 include/vcix_accel.hpp    C++ wrapper: subclass Model, VCIX_ACCEL_REGISTER
 adapters/spike/           the Spike extension `vcixaccel`
-adapters/gem5/            where the gem5 change lives
-examples/                 models, each with a program that exercises it,
-                          and a gem5 fixture to run them
+adapters/gem5/            what the gem5 branch does; its code is in the gem5
+                          repository
+examples/print_args/      the example: a model, a program that exercises it,
+                          a machine description, and a script that runs both
+examples/gem5_se.py       the gem5 fixture the example and the tests run on
 tools/timing_probe.cc     drives a model's timing face without gem5
-tests/run.sh              every test below, on both simulators
+tests/run.sh              every test below
 tests/contract/           the rules of the interface: ownership, the machine
-                          description, the model table, and the test harness
+                          description, the model table, processor state, and
+                          the test harness
 tests/pipeline/           a pipelined model overlaps instructions on gem5
 tests/print_args/         the example reaches the model once per instruction
 setup/                    the pinned environment: versions.env, the scripts
                           that build it, and the image
 scripts/                  build this repository; how each simulator is started
+.github/workflows/        CI: publish the image, then build and test in it
 ```
 
-## Examples
+## Example
 
-The examples are not a prescribed structure. Each shows one way a model can be
-put together on top of the same interface; a real accelerator will pick its own
+The example is not a prescribed structure. It shows one way a model can be put
+together on top of the interface; a real accelerator will pick its own
 encodings, state, and timing.
 
-- `print_args` — a unit that only observes. It owns the whole custom-2 and
-  custom-1 spaces,
-  computes nothing, and prints what each face is given: the operands it can see
-  on the functional face, the instruction and the cycle on the timing face.
-  An instruction takes a configured number of cycles per register of its
-  operand group (so LMUL shows up in the timing). It takes one instruction at
-  a time and is busy for 3 cycles after a commit. `machine.yml` stands in for the machine description. `vcix.S` drives it with one `sf.vc.*`
-  instruction of each operand form, one under LMUL=2, and one custom-1
-  instruction.
+`print_args` is a unit that only observes. It owns the whole custom-2 and
+custom-1 spaces, computes nothing, and prints what each face is given: on the
+functional face the fields and the registers the encoding names, on the timing
+face the instruction and the cycle. It takes one instruction at a time and is
+busy for 3 cycles after a commit. An instruction takes a configured number of
+cycles, once per register of the operand group if it has a vector operand (so
+LMUL shows up in the timing) and once otherwise.
+
+`machine.yml` stands in for the machine description. `vcix.S` drives the model
+with seven `sf.vc.*` forms (`x`, `i`, `vv`, `v.vv`, `v.xv`, `v.fv`, `v.ivv`),
+`v.vv` again under LMUL=2, and one custom-1 instruction. It does not cover the
+widening forms, the three-operand forms without `vd`, or fractional LMUL.
 
 ## Environment
 
@@ -285,7 +304,7 @@ minutes at `-j 24`. `setup/setup.sh spike repo` runs only those steps.
 
 ```
 scripts/build.sh                 # cmake + ninja into build/, against the Spike above
-tests/run.sh                     # every test, on both simulators; non-zero if any fails
+tests/run.sh                     # every test; non-zero if any fails
 examples/print_args/run.sh       # the example, printing what each face is given
 ```
 
@@ -303,15 +322,18 @@ ninja -C build
 Without `SPIKE_SRC` and `SPIKE_BUILD` only the models and the probe are built;
 a model needs no simulator tree.
 
-Spike loads the adapter with `--extlib=libvcix_spike.so` and the ISA string
-suffix `_xvcixaccel`, and the adapter loads the model named by the
-`VCIX_ACCEL_MODEL` environment variable. gem5 takes the model as the
-`vcixModel` parameter of a functional unit. `scripts/sim.sh` is where the run
-scripts keep both command lines.
+How each simulator is given the adapter, the model and the machine description
+is in the table under "What you configure, per run"; `scripts/sim.sh` is where
+the run scripts keep both command lines.
 
 ## Status
 
-- Interface header and C++ wrapper: first draft.
-- Spike adapter: working.
+- Interface: ABI version 5 (`VCIX_ACCEL_ABI_VERSION`); an adapter refuses a
+  model of another version. The gem5 branch carries a copy of
+  `include/vcix_accel.h` (`src/cpu/minor/vcix_accel.h`) that must be kept
+  identical to this one.
+- Spike adapter: working. It does not yet check `configure` or the table for
+  NULL, nor refuse a machine description that is not a mapping;
+  `tests/contract` runs those cases on gem5 only.
 - gem5 adapter: working, on MinorCPU only; branch `vcix` of
   `PSAL-POSTECH/gem5`, on upstream gem5 25.1.0.1 (see `adapters/gem5/`).

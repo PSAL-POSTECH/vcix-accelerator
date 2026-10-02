@@ -41,11 +41,11 @@ typedef struct vcix_pending {
   vcix_cycle_t ready;  /* issued + the latency the model answered */
 } vcix_pending;
 
-/* The machine description, read by the adapter. get(key) is the text of a
- * top-level scalar as written, with no typing, or NULL when the key is missing
- * or its value is YAML null, a mapping or a sequence. Both adapters must give
- * the same answer for the same file. The config and the strings it returns are
- * valid only until configure returns. */
+/* The machine description as the simulator's side read it (the Spike adapter;
+ * the gem5 config script). get(key) is the text of a top-level scalar as
+ * written, with no typing, or NULL when the key is missing or its value is YAML
+ * null, a mapping or a sequence. Both give the same answer for the same file.
+ * The config and its strings are valid only until configure returns. */
 typedef struct vcix_config {
   void *ctx;
   const char *(*get)(void *ctx, const char *key);

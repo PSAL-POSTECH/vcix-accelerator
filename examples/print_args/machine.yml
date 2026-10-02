@@ -1,5 +1,6 @@
 # Stands in for the machine description a real setup already has (PyTorchSim's
-# configs/*.yml). Both adapters read it; the model asks for keys.
+# configs/*.yml). The model asks for keys; print_args reads the first and the last.
+# Nothing reads vpu_vector_length_bits: VLEN is Spike's --varch and the gem5 fixture's --vlen.
 vpu_num_lanes: 4
 vpu_vector_length_bits: 256
 print_args_latency_cycles: 7

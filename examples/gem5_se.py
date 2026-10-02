@@ -1,6 +1,6 @@
-# Test fixture for the examples, not a machine description: gem5's default MinorCPU
-# pool plus one accelerator unit. Usage: gem5.opt gem5_se.py --model M.so BINARY
-# Exits with the program's exit code; non-zero if the simulation ended any other way.
+# Test fixture for the example and the tests, not a machine description: gem5's default
+# MinorCPU pool plus one accelerator unit. Exits with the program's exit code, or 1.
+# Usage: gem5.opt gem5_se.py --model M.so [--config machine.yml] [--vlen BITS] [--max-ticks N] BINARY
 import argparse
 import sys
 
