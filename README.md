@@ -47,6 +47,10 @@ is a single custom unit with unit operation and issue latency; the model keeps
 whatever internal structure it needs (several sub-units, queues, pipelines)
 behind that one unit.
 
+**On gem5 only MinorCPU is supported.** The other CPU models do not ask the
+model, and what they do instead is wrong rather than an error: see
+`adapters/gem5/README.md`.
+
 ## Writing your hardware model
 
 There are three kinds of code here. Only the first is yours.
@@ -309,5 +313,5 @@ scripts keep both command lines.
 
 - Interface header and C++ wrapper: first draft.
 - Spike adapter: working.
-- gem5 adapter: working; branch `vcix` of `PSAL-POSTECH/gem5`, on upstream
-  gem5 25.1.0.1 (see `adapters/gem5/`).
+- gem5 adapter: working, on MinorCPU only; branch `vcix` of
+  `PSAL-POSTECH/gem5`, on upstream gem5 25.1.0.1 (see `adapters/gem5/`).

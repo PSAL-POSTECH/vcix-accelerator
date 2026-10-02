@@ -2,7 +2,8 @@
 
 The gem5 side lives in the gem5 repository, not here: branch `vcix` of
 `PSAL-POSTECH/gem5`, on top of upstream gem5 `stable` (25.1.0.1,
-`f5c5a6e390`). It carries no accelerator.
+`f5c5a6e390`). It carries no accelerator. **Only MinorCPU is supported**; see
+the end of this page for what the other CPU models do.
 
 1. **Decode** — the whole custom-2 opcode decodes to one instruction class,
    `Vcix` (`arch/riscv/insts/vcix.hh`). It computes no values.
@@ -57,6 +58,16 @@ would let the model's definition win, and was tried and dropped: gem5 runs on
 tcmalloc, and a deep-bound model frees with glibc what libc allocated with
 tcmalloc (`strdup`, `asprintf`) and crashes in `std::cout`.
 
-Limits: only MinorCPU asks the model; on other CPU models a VCIX instruction
-does nothing. `cpu/minor/execute.cc` includes RISC-V headers for the fault, so
-the branch is not ISA-neutral.
+## Limits
+
+**Only MinorCPU is supported.** No other CPU model asks the model, and none of
+them fails cleanly:
+
+- **O3** does not finish. With one such instruction in the program, commit
+  stops and `iew.iqFullEvents` grows every cycle until the simulation limit.
+- **The simple CPUs** (atomic, timing) execute it as an instruction that does
+  nothing but its state checks: no model is asked, no latency is charged, and
+  an instruction no model owns passes instead of trapping.
+
+`cpu/minor/execute.cc` includes RISC-V headers for the fault, so the branch is
+not ISA-neutral.
