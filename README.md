@@ -184,7 +184,7 @@ from it. So how many instructions overlap is the model's decision: a unit that
 takes one at a time accepts only when `pending` is empty, a pipelined unit
 accepts while `pending` is shorter than its depth, and a unit with a queue
 counts the pushes in flight. gem5 bounds that decision: a unit with
-`vcixMaxInFlight` instructions in flight (64 unless the CPU config sets it) is
+`vcixMaxInFlight` instructions in flight (8192 unless the CPU config sets it) is
 issued no more, and the model is not asked until one commits.
 
 The model has two sets of methods because the two simulators know different
