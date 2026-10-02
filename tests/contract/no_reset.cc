@@ -20,6 +20,7 @@ const vcix_model table = {
     [](void *, vcix_id_t, vcix_cycle_t) {},
     [](void *, const vcix_insn *, vcix_id_t, vcix_cycle_t) {},
     nullptr,  // tick
+    nullptr,  // ready
     nullptr,  // reset
 };
 

@@ -25,6 +25,8 @@ vcix_accel_add_model(always_accepts tests/contract/always_accepts.cc)
 vcix_accel_add_model(refuses tests/contract/refuses.cc)
 vcix_accel_add_model(queued tests/contract/queued.cc)
 vcix_accel_add_model(speculates tests/contract/speculates.cc)
+vcix_accel_add_model(waits tests/contract/waits.cc)
+vcix_accel_add_model(ready_only tests/contract/ready_only.cc)
 
 # tests/contract: one source built twice under the same class name, hidden and not.
 foreach(which 1 2)
