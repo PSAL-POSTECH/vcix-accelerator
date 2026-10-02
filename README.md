@@ -358,8 +358,10 @@ widening forms, the three-operand forms without `vd`, or fractional LMUL.
 
 Building and running needs a RISC-V toolchain, the proxy kernel, Spike and the
 gem5 branch. `setup/versions.env` pins all of them -- repository and commit for
-each simulator, the scons and Python that gem5 needs -- and is the only place a
-version is written. There are two ways to get what it describes.
+Spike and pk, the gem5 release and the Python it embeds -- and is
+the only place a version is written. gem5 is not built here: a `vcix-v*` tag in
+`PSAL-POSTECH/gem5` publishes `gem5.opt`, built for the packages
+`setup/system.sh` installs, and the setup downloads it. There are two ways to get what it describes.
 
 **The image.** CI publishes the environment, already built, to GHCR. Its tag is
 derived from the contents of `setup/`, so a checkout names the image it needs:
@@ -380,8 +382,8 @@ setup/setup.sh -j 16       # toolchain, pk, spike, gem5, then this repository
 ```
 
 Everything lands under `/opt/vcix-env`; set `VCIX_ENV_ROOT` to put it elsewhere
-(and keep it set when running). The gem5 build is most of the time: about ten
-minutes at `-j 24`. `setup/setup.sh spike repo` runs only those steps.
+(and keep it set when running). `setup/setup.sh spike repo` runs only those
+steps.
 
 ## Build and run
 
