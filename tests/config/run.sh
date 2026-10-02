@@ -1,12 +1,7 @@
 #!/usr/bin/env bash
-# Both simulators hand a model the same machine description, and it is the one
-# include/vcix_accel.h describes at vcix_config: text as written, YAML null and
-# non-scalars absent, an empty file an empty description, the first document.
-# For each <name>.yml the model's report must equal <name>.expected on both.
-# A value the model reads as a number is that number or stops the run, never
-# a guess: Config::uint in include/vcix_accel.hpp.
+# Both simulators must hand a model the same machine description (vcix_config in
+# include/vcix_accel.h), and a malformed number must stop the run.
 # Usage: tests/config/run.sh [build-dir [spike [pk [gem5.opt]]]]
-# Each defaults to what setup/setup.sh produced; see scripts/sim.sh.
 set -uo pipefail
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 source "$HERE/../../scripts/sim.sh"
@@ -20,8 +15,7 @@ report() {
   if [ "$1" = 1 ]; then echo "PASS  $2"; else echo "FAIL  $2"; failed=1; fi
 }
 
-# handed <simulator> <name> <exit-code>: the run succeeded and the model's
-# report, shows_config.cc's "[config] ..." lines, is exactly <name>.expected.
+# handed <simulator> <name> <exit-code>: the model's report equals <name>.expected.
 handed() {
   local sim=$1 name=$2 rc=$3 ok=0
   local log="$BUILD/config-$name.$sim.log"
@@ -39,18 +33,14 @@ for name in values empty two_documents; do
   handed gem5 $name $?
 done
 
-# A top level that is not a mapping is refused before the model is configured.
-# gem5 only: the Spike adapter does not refuse every such file yet.
+# gem5 only: the Spike adapter does not refuse a non-mapping top level yet.
 gem5_run "$BUILD/m5out-config-not_a_mapping" "$MODEL" "$HERE/not_a_mapping.yml" "$BUILD/nothing" \
   > "$BUILD/config-not_a_mapping.gem5.log" 2>&1; rc=$?
 configured=$(grep -c '^\[config\]' "$BUILD/config-not_a_mapping.gem5.log")
 ok=0; [ "$rc" = 1 ] && [ "$configured" = 0 ] && ok=1
 report $ok "gem5 refuses not_a_mapping.yml (exit $rc, model configured with $configured values)"
 
-# number <simulator> <value as written in YAML> <exit-code> <the number, or "" when the run must stop>
-# shows_config reads `count` with Config::uint and reports "[number] count = N".
-# A malformed value must stop the run before that, with the wrapper's message:
-# "<model>: machine description: <key>: '<text>' ..." (ConfigError, vcix_accel.hpp).
+# number <simulator> <value> <exit-code> <the number, or "" when the run must stop>
 number() {
   local sim=$1 written=$2 rc=$3 want=$4 ok=0 got said text
   local log="$BUILD/config-number.$sim.log"

@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
-# An instruction the model does not own must end as an illegal instruction on both
-# simulators with no call to the model; an owned one is executed/committed exactly once,
-# and each simulator calls only its own face.
+# An unowned instruction ends as an illegal instruction on both simulators with no call
+# to the model; an owned one is executed/committed once, each simulator on its own face.
 # Usage: tests/ownership/run.sh [build-dir [spike [pk [gem5.opt]]]]
-# Each defaults to what setup/setup.sh produced; see scripts/sim.sh.
 set -uo pipefail
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 source "$HERE/../../scripts/sim.sh"
@@ -17,17 +15,11 @@ for prog in owned unowned; do
 done
 
 # calls <log> <entry>: the model's reports of <entry> for the owned instruction.
-# The line is owns_one.cc's own: "[model] <entry> <instruction bits>".
 calls() { grep -Fxc "[model] $2 $OWNED_INSN" "$1"; }
 
 # check <simulator> <program> <exit-code> <want-ok: 0|1>
-# Every call the model reports must be one this simulator's face makes, for the
-# owned instruction: on Spike one `execute` and nothing else; on gem5 one
-# `commit`, and `accept` and `issue` at least once each (gem5 may ask again
-# for an instruction it squashed). A call through the other face, a second
-# execute or commit, or any call for another instruction is in `other`.
-# A program that must not run to the end must end as an illegal instruction, on
-# the unowned instruction; dying any other way is a failure.
+# Spike: one execute. gem5: one commit, accept and issue at least once (a squashed
+# instruction is asked again). Any other call the model reports fails the check.
 check() {
   local sim=$1 prog=$2 rc=$3 want_ok=$4
   local log="$BUILD/$prog.$sim.log" ok=1 ended seen other

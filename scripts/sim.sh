@@ -22,19 +22,14 @@ for needed in "$BUILD/libvcix_spike.so" "$SPIKE" "$PK" "$GEM5"; do
   echo "$needed: not found -- run setup/setup.sh, or pass [build-dir [spike [pk [gem5.opt]]]]" >&2
   exit 2
 done
-# The exit is spelled out: a caller without `set -e` would otherwise go on with
-# an empty BUILD and write to /.
 BUILD="$(cd "$BUILD" && pwd)" || { echo "$BUILD: cannot resolve the build directory" >&2; exit 2; }
 
 # The toolchain the setup unpacked, when there is one; otherwise clang and
 # riscv64-unknown-elf-gcc come from the caller's PATH.
 [ -d "$TOOLCHAIN_ROOT/bin" ] && PATH="$TOOLCHAIN_ROOT/bin:$PATH"
 
-# rv_program <source.S> <elf>
-# clang assembles the sf.vc.* mnemonics; the GNU assembler does not know them.
-# Fails when either step fails, whether or not the caller runs under `set -e`,
-# and removes what an earlier run left first: after a failure there is no ELF,
-# so a caller that goes on anyway cannot run a program it did not just build.
+# rv_program <source.S> <elf>: clang assembles (sf.vc.* mnemonics), gcc links.
+# Earlier output is removed first, so a failed build leaves no ELF to run.
 rv_program() {
   rm -f "$2" "$2.o" || return
   clang --target=riscv64 -march=rv64gcv_xsfvcp -c "$1" -o "$2.o" || return
@@ -42,7 +37,6 @@ rv_program() {
 }
 
 # spike_run <model.so> <machine.yml, or ""> <elf>
-# Exits with the program's exit code.
 spike_run() {
   local settings=("VCIX_ACCEL_MODEL=$1")
   [ -n "$2" ] && settings+=("VCIX_ACCEL_CONFIG=$2")
@@ -51,35 +45,23 @@ spike_run() {
 }
 
 # gem5_run <output-dir> <model.so> <machine.yml, or ""> <elf> [fixture options]
-# Exits with the program's exit code, as Spike does: the fixture passes it on.
 gem5_run() {
   local description=()
   [ -n "$3" ] && description=(--config "$3")
   "$GEM5" -d "$1" "$REPO/examples/gem5_se.py" --model "$2" "${description[@]}" "${@:5}" "$4"
 }
 
-# How each simulator says that a run ended as an illegal instruction. The exit
-# code cannot say it: a segfault exits non-zero as well. Each takes the run's
-# log and, optionally, the instruction that must have been the illegal one, as
-# 8 hex digits.
+# Whether a run ended as an illegal instruction; the exit code alone cannot say.
+# <log> [insn as 8 hex digits]
 
-# spike_illegal <log> [insn]
-# The message is pk's: pk/handlers.c handle_illegal_instruction() calls
-# dump_tf(), whose last line is "pc %lx va/inst %lx sr %lx" with the
-# instruction's bits in the middle, then panic("An illegal instruction was
-# executed!").
+# spike_illegal: pk's message and the instruction in its trap-frame dump.
 spike_illegal() {
   local insn=${2:-'[0-9a-f]{8}'}
   grep -Fxq 'An illegal instruction was executed!' "$1" &&
     grep -Eq "^pc [0-9a-f]+ va/inst 0*$insn sr [0-9a-f]+\$" "$1"
 }
 
-# gem5_illegal <log> [insn]
-# The message is the gem5 branch's: src/cpu/minor/execute.cc gives an
-# instruction no model owns IllegalInstFault("no VCIX accelerator model owns
-# it"), and src/arch/riscv/faults.cc IllegalInstFault::invokeSE() panics with
-# "Illegal instruction 0x%08x at pc %s: %s". What it prints is the extended
-# machine instruction; the instruction's bits are its low 32.
+# gem5_illegal: the gem5 branch's panic for an instruction no model owns.
 gem5_illegal() {
   local insn=${2:-'[0-9a-f]{8}'}
   grep -Eq "panic: Illegal instruction 0x[0-9a-f]*$insn at pc .*: no VCIX accelerator model owns it\$" "$1"

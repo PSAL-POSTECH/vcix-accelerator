@@ -8,9 +8,7 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 add_library(vcix_accel INTERFACE)
 target_include_directories(vcix_accel INTERFACE include)
 
-# A model library exports one symbol, vcix_accel_model, which
-# VCIX_ACCEL_REGISTER makes visible by itself. Everything else is hidden, so
-# two models loaded into one simulator cannot share symbols by accident.
+# A model library exports one symbol; everything else is hidden.
 function(vcix_accel_add_model name source)
   add_library(${name} SHARED ${source})
   target_link_libraries(${name} PRIVATE vcix_accel)
@@ -22,9 +20,7 @@ vcix_accel_add_model(owns_one tests/ownership/owns_one.cc)
 vcix_accel_add_model(pipelined tests/pipeline/pipelined.cc)
 vcix_accel_add_model(shows_config tests/config/shows_config.cc)
 
-# tests/two_models: one source built twice, so both libraries define a model
-# class of the same global name; and once more with the compiler's default
-# visibility, the way a model built outside this file may well be.
+# tests/two_models: one source built twice under the same class name, hidden and not.
 foreach(which 1 2)
   vcix_accel_add_model(same_name_${which} tests/two_models/same_name.cc)
   target_compile_definitions(same_name_${which} PRIVATE WHICH=${which})

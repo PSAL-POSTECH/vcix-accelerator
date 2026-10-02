@@ -1,7 +1,6 @@
 # Test fixture for the examples, not a machine description: gem5's default MinorCPU
 # pool plus one accelerator unit. Usage: gem5.opt gem5_se.py --model M.so BINARY
-# gem5 exits with the program's exit code, and non-zero if the simulation ended
-# for any reason other than the program exiting.
+# Exits with the program's exit code; non-zero if the simulation ended any other way.
 import argparse
 import sys
 
@@ -19,16 +18,12 @@ parser.add_argument("--max-ticks", type=int, help="stop the simulation after thi
 args = parser.parse_args()
 
 
-# The tag PyYAML's resolver gives a null value: nothing after the colon, `~`,
-# `null`. A quoted "null" or "" gets the string tag instead.
+# The tag PyYAML's resolver gives a YAML null.
 YAML_NULL = "tag:yaml.org,2002:null"
 
 
-# The machine description as a model is to be handed it: the rule is the one
-# include/vcix_accel.h states at vcix_config, for both adapters. The file is
-# composed, not loaded: a node carries the scalar's text as written and the tag
-# the resolver gave it, so nothing here types a value or compares text to
-# decide what is null.
+# The machine description as vcix_config in include/vcix_accel.h defines it.
+# Composed, not loaded: values keep their text, and null is the resolver's decision.
 def machine_description(path):
     with open(path) as f:
         root = next(yaml.compose_all(f, Loader=yaml.SafeLoader), None)
@@ -81,11 +76,9 @@ m5.instantiate()
 event = m5.simulate(*([args.max_ticks] if args.max_ticks is not None else []))
 print(f"exit: {event.getCause()} at cycle {m5.curTick() // 1000}")
 
-# The cause gem5 gives when the last thread of an SE workload calls exit:
-# exitImpl() in src/sim/syscall_emul.cc. Its code is then the program's.
+# The cause gem5 gives when the program exits.
 PROGRAM_EXITED = "exiting with last active thread context"
 if event.getCause() != PROGRAM_EXITED:
-    # gem5's main() takes the exit status as an integer; a message would abort it.
     print(f"gem5_se.py: the simulation did not end with the program exiting: {event.getCause()}", file=sys.stderr)
     sys.exit(1)
 sys.exit(event.getCode())
