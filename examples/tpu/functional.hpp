@@ -173,6 +173,10 @@ class Functional {
     xlu_operation_ = 0;
     dma_descriptor_ = 0;
     dma_indirect_count_ = 0;
+    msa_weight_.clear();
+    msa_output_.clear();
+    msa_format_ = 0;
+    msa_shift_ = 0;
   }
 
   void execute(const Host &host, const Insn &insn) {
@@ -212,6 +216,8 @@ class Functional {
           {"mvin2", &Functional::mvin},
           {"mvin3", &Functional::mvin},
           {"mvout", &Functional::mvout},
+          {"msa push", &Functional::msa_push},
+          {"msa pop", &Functional::msa_pop},
       };
       std::vector<Entry> made;
       for (const std::pair<const char *, Handler> &one : named) {
@@ -490,6 +496,88 @@ class Functional {
       }
   }
 
+  // ---- The multi-precision array (riscv-isa-sim branch spike-multi-precision-sa, ea9ec10): the systolic
+  // array on words of 32 bits that hold 1 single, 2 halves or 4 floats of 8 bits, so a column has
+  // lanes x that many weights. The field at 19:15 of a push: [4] weights or inputs, [3:2] how many columns
+  // compute (all of them shifted right by it), [1:0] what a word holds.
+  enum MsaFormat : uint32_t { MSA_SINGLE = 0, MSA_HALF = 1, MSA_E4M3 = 2, MSA_E5M2 = 3 };
+  static uint32_t msa_pack(uint32_t format) { return format == MSA_SINGLE ? 1 : format == MSA_HALF ? 2 : 4; }
+  // Element `slot` of a word, from its low bits up.
+  static float msa_element(uint32_t word, uint32_t slot, uint32_t format) {
+    const uint32_t bits = 32 / msa_pack(format), part = word >> (slot * bits);
+    switch (format) {
+      case MSA_SINGLE: {
+        float value;
+        std::memcpy(&value, &word, sizeof value);
+        return value;
+      }
+      case MSA_HALF: return half_to_float(static_cast<uint16_t>(part));
+      default: return fp8_to_float(static_cast<uint8_t>(part), format == MSA_E5M2 ? E5M2 : E4M3);
+    }
+  }
+  void msa_size(const Host &host) {
+    if (msa_weight_.size() == host.lanes()) return;
+    msa_weight_.assign(host.lanes(), {});
+    msa_output_.assign(host.lanes(), {});
+  }
+  void msa_push(const Host &host, const Insn &insn) {
+    msa_size(host);
+    if (insn.sew_bits != 32) fail("msa push: its elements are words of 32 bits, not of %u", insn.sew_bits);
+    const uint32_t lanes = host.lanes(), field = vcix_accel::rs1(insn), vs = vcix_accel::rs2(insn);
+    const uint32_t format = field & 3, pack = msa_pack(format);
+    if (field & 0x10) {
+      // A weight push says the format and the width; changing either empties the matrix.
+      const uint32_t shift = (field >> 2) & 3;
+      if (lanes >> shift == 0) fail("msa push: no column is left of %u when shifted by %u", lanes, shift);
+      if (format != msa_format_ || shift != msa_shift_)
+        for (std::deque<float> &column : msa_weight_) column.clear();
+      msa_format_ = format;
+      msa_shift_ = shift;
+      for (uint32_t lane = 0; lane < lanes; lane++)
+        for (uint32_t i = 0; i < insn.vl; i++)
+          for (uint32_t slot = 0; slot < pack; slot++) {
+            if (msa_weight_[lane].size() == lanes * pack) msa_weight_[lane].pop_front();
+            msa_weight_[lane].push_back(msa_element(get<uint32_t>(host, lane, vs, i), slot, format));
+          }
+      return;
+    }
+    if (pack != msa_pack(msa_format_))
+      fail("msa push: inputs of %u to a word, weights of %u", pack, msa_pack(msa_format_));
+    // Element i of every lane is one input row; a column past the width computes 0.
+    std::vector<float> row(lanes * pack);
+    for (uint32_t i = 0; i < insn.vl; i++) {
+      for (uint32_t lane = 0; lane < lanes; lane++)
+        for (uint32_t slot = 0; slot < pack; slot++)
+          row[lane * pack + slot] = msa_element(get<uint32_t>(host, lane, vs, i), slot, format);
+      for (uint32_t lane = 0; lane < lanes; lane++) {
+        float output = 0;
+        if (lane < lanes >> msa_shift_) {
+          uint32_t k = 0;
+          for (float weight : msa_weight_[lane]) output += row[k++] * weight;
+        }
+        msa_output_[lane].push_back(output);
+      }
+    }
+  }
+  // A pop takes what is there and no more. To fewer bits it rounds to nearest even; 8 bits are E5M2 when the
+  // field's [1:0] says so and E4M3 otherwise.
+  void msa_pop(const Host &host, const Insn &insn) {
+    msa_size(host);
+    const uint32_t vd = vcix_accel::rd(insn);
+    const Narrow &byte = (vcix_accel::rs1(insn) & 3) == MSA_E5M2 ? E5M2 : E4M3;
+    for (uint32_t lane = 0; lane < host.lanes(); lane++)
+      for (uint32_t i = 0; i < insn.vl; i++) {
+        if (msa_output_[lane].empty()) break;
+        const float value = msa_output_[lane].front();
+        msa_output_[lane].pop_front();
+        switch (insn.sew_bits) {
+          case 8: put<uint8_t>(host, lane, vd, i, static_cast<uint8_t>(narrow(value, byte, 0))); break;
+          case 16: put<uint16_t>(host, lane, vd, i, static_cast<uint16_t>(narrow(value, HALF, 0))); break;
+          default: put<float>(host, lane, vd, i, value); break;
+        }
+      }
+  }
+
   // ---- The DMA: a tensor of up to four dimensions between memory and the scratchpad, one slice of the split
   // axis per lane. dma_config_desc names the descriptor; mvin and mvout read it when they run. x[rs1] is the
   // address in memory and x[rs2] the address in the scratchpad.
@@ -764,6 +852,9 @@ class Functional {
   std::vector<std::deque<uint32_t>> xlu_in_, xlu_before_, xlu_after_, xlu_out_;
   uint64_t xlu_depth_ = 0;  // elements pushed per lane since the last pop ran
   uint32_t xlu_operation_ = 0;
+
+  Queues msa_weight_, msa_output_;  // per lane: its column of the matrix, and what it computed
+  uint32_t msa_format_ = 0, msa_shift_ = 0;  // as the last weight push said
 
   uint64_t dma_descriptor_ = 0;
   uint64_t dma_indirect_count_ = 0;

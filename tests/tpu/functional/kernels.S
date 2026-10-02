@@ -153,6 +153,52 @@ k_cross_load:
     mv      a0, t0
     ret
 
+# The multi-precision array. a3 = the field of the instruction, 0 to 31 for a push and 0 to 3 for a pop.
+.macro msa_push name, sew
+    .globl \name
+\name:
+    vsetvli t0, a2, e\sew, m2, ta, ma
+    vle\sew\().v v8, (a0)
+    la      t1, 1f
+    slli    t3, a3, 3
+    add     t1, t1, t3
+    jr      t1
+1:
+  .irp field, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15
+    sf.vc.iv 0x2, 0, v8, \field
+    j       2f
+  .endr
+  .irp field, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31
+    sf.vc.iv 0x2, 0, v8, \field-32
+    j       2f
+  .endr
+2:  mv      a0, t0
+    ret
+.endm
+.macro msa_pop name, sew
+    .globl \name
+\name:
+    vsetvli t0, a2, e\sew, m2, ta, ma
+    vle\sew\().v v16, (a1)
+    la      t1, 1f
+    slli    t3, a3, 3
+    add     t1, t1, t3
+    jr      t1
+1:
+  .irp field, 0, 1, 2, 3
+    sf.vc.v.i 0x3, 0, v16, \field
+    j       2f
+  .endr
+2:  vse\sew\().v v16, (a1)
+    mv      a0, t0
+    ret
+.endm
+    msa_push k_msa_push_32, 32
+    msa_push k_msa_push_16, 16
+    msa_pop k_msa_pop_8, 8
+    msa_pop k_msa_pop_16, 16
+    msa_pop k_msa_pop_32, 32
+
 # vlane_idx at an element width: a1 receives a3 doublewords of the group it wrote into, which was 0.
 .macro lane_index name, sew
     .globl \name

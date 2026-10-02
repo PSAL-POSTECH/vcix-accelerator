@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 # The functional face of the tpu example, on Spike. Each program prints what its instructions left in the
 # registers, the scratchpad and memory; from-old-spike.sha256 is what the Spike these units came from printed
-# (riscv-isa-sim branch spike-fp8, 7259e73, the units built in), so a PASS says the model does what that Spike did.
+# (riscv-isa-sim branch spike-multi-precision-sa, ea9ec10, the units built in), so a PASS says the model does what
+# that Spike did.
 # Called by tests/tpu/run.sh. Usage: tests/tpu/functional/run.sh <build-dir> <spike> <pk> [old spike]
 #   With an old spike, each program is also run on it and the two outputs are compared byte by byte.
 set -uo pipefail
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source=../../../setup/versions.env
 source "$HERE/../../../setup/versions.env"
-[ $# -ge 3 ] || { sed -n '2,6p' "${BASH_SOURCE[0]}" >&2; exit 2; }
+[ $# -ge 3 ] || { sed -n '2,7p' "${BASH_SOURCE[0]}" >&2; exit 2; }
 BUILD=$(cd "$1" && pwd) || exit 2
 SPIKE=$2 PK=$3 OLD=${4:-}
 MODEL="$BUILD/libtpu.so"
@@ -25,7 +26,7 @@ KERNEL_BASE=0x2000000
 KERNEL_RANGE=2000000:2100000
 
 clang --target=riscv64 -march=rv64gcv_xsfvcp -c "$HERE/kernels.S" -o "$OUT/kernels.o" || { echo "FAIL  kernels.S does not build"; exit 2; }
-for program in special systolic cross_lane dma refused; do
+for program in special systolic cross_lane msa dma refused; do
   riscv64-unknown-elf-gcc -O1 -Wall -Werror -static -march=rv64gc -mabi=lp64d -Wl,--section-start=.kernel=$KERNEL_BASE \
     "$HERE/$program.c" "$OUT/kernels.o" -o "$OUT/$program" || { echo "FAIL  $program.c does not build"; exit 2; }
 done
@@ -76,6 +77,7 @@ same special from-old-spike.sha256 "the seven special functions: every half, 409
 same systolic from-old-spike.sha256 "the systolic array: weights that slide, pops in pieces, every element width, both floats of 8 bits, every value of frm" -- systolic
 same lanes from-old-spike.sha256 "vlane_idx at every element width" -- cross_lane lanes
 same cross from-old-spike.sha256 "the cross-lane unit: each of its 24 operations, with the patterns it reads" -- cross_lane 0 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23
+same msa from-old-spike.sha256 "the multi-precision array: singles, halves and both floats of 8 bits to a word, every width, pops at every element width" -- msa
 same dma from-old-spike.sha256 "the DMA: 300 descriptors, an mvin and an mvout each, and the indices of the indirect ones" --base-path -- dma 0 300
 
 # refused <which> <exit> <text>: the run ends there, with this on standard error.
@@ -90,6 +92,7 @@ refused doubles 1 "tpu: vexp: an element of 64 bits is not supported"
 refused pop 1 "tpu: systolic pop: 1 elements asked, 0 computed"
 refused input 1 "tpu: systolic input push: no weight was pushed before it"
 refused pattern 201 "XLU ERROR: the pre stage walks 1 columns but lane 0 carries 0 pattern entries (SIMM5 16)"
+refused words 1 "tpu: msa push: its elements are words of 32 bits, not of 16"
 refused overflow 200 "MVIN ERROR: Scratchpad address overflow: 0xd0080000"
 refused indices 1 "tpu: mvin: an indirect transfer writes its indices under --base-path, and none was given"
 

@@ -11,7 +11,7 @@ registers and to memory, which `execute` hands every instruction to.
 | Unit | File | Instructions | Timing |
 |---|---|---|---|
 | `tpu::Sfu` | `sfu.hpp` | `verf`, `vtanh`, `vsin`, `vcos`, `vlog`, `vatan`, `vexp` (`sf.vc.v.iv`, custom-2) | a pipeline: one instruction enters per cycle, the result is ready `tpu_sfu_latency_cycles` after it entered, and any number are inside at once |
-| `tpu::Misc` | `misc.hpp` | `vlane_idx`, `compute` (custom-2); the DMA's `dma_config_desc`, `mvin`, `mvin2`, `mvin3`, `mvout` (custom-1) | one cycle each, any number in a cycle |
+| `tpu::Misc` | `misc.hpp` | `vlane_idx`, `compute`, and until it has a unit of its own the multi-precision array's `msa push` (`sf.vc.iv` 2) and `msa pop` (`sf.vc.v.i` 3) (custom-2); the DMA's `dma_config_desc`, `mvin`, `mvin2`, `mvin3`, `mvout` (custom-1) | one cycle each, any number in a cycle |
 | `tpu::Systolic` | `systolic.hpp` | the systolic array's input push (`sf.vc.iv` 0), weight push (`sf.vc.iv` 1) and pop (`sf.vc.v.i` 2) (custom-2) | one instruction per cycle. A push of `vl` elements waits for room in the input queue; one element a cycle enters a delay line of 2 x `vpu_num_lanes` - 1 slots and comes out into the output queue; a pop of `vl` waits until the output queue holds `vl`. A weight push changes nothing. The array stops while the output queue is full |
 | `tpu::Xlu` | `xlu.hpp` | the cross-lane unit's `xlu_push` (`sf.vc.iv` 3), `xlu_push_pattern` (`sf.vc.ivv` 3) and `xlu_pop` (`sf.vc.v.i` 1) (custom-2) | one instruction per cycle, one cycle each. A push of `vl` elements, of either kind, waits for room in the input queue; one element a cycle enters a delay line of `tpu_xlu_latency_cycles` slots and comes out into the output queue; a pop of `vl` waits until the output queue holds `vl`. The unit stops while the output queue is full |
 
@@ -35,9 +35,9 @@ cross-lane unit also move in `tick`.
 ## The functional face
 
 `tpu::Functional` does what the Spike these units came from did
-(riscv-isa-sim branch `spike-fp8`, 7259e73, the units built in; the DMA as of
-9f555b4, without the element type that branch added to the descriptor), in
-every lane:
+(riscv-isa-sim branch `spike-multi-precision-sa`, ea9ec10: `spike-fp8` and the
+multi-precision array, the units built in; the DMA as of 9f555b4, without the
+element type `spike-fp8` added to the descriptor), in every lane:
 
 | Instructions | What they do |
 |---|---|
@@ -45,6 +45,7 @@ every lane:
 | `vlane_idx` | every element of `vd` is its lane's number, written as 64 bits whatever the element width |
 | systolic weight push, input push, pop; `compute` | a weight push adds a column to the matrix, of which a lane keeps its last `lanes` weights; an input push multiplies at once, element `i` of every lane being one input vector; a pop takes the results; `compute` does nothing. Elements are singles, halves or 8 bits wide; what 8 bits are rides the instruction in its rs1 field: 1 an E4M3 float, 2 an E5M2 float, anything else an integer. A pop to halves or to 8-bit floats rounds by `frm`, which the model reads through the host |
 | `xlu_push`, `xlu_push_pattern`, `xlu_pop` | a tile of raw 32-bit values is pushed; the first pop after a push moves it across the lanes as the field at 19:15 of the push says ([4:3] the lanes shuffled before, [2] depth and lane exchanged, [1:0] the lanes shuffled after). A shuffle is none (0), every lane reading lane 0 (1), or every lane reading the lane a pattern names (2). The pattern of the shuffle before comes with `xlu_push_pattern`; the one of the shuffle after is loaded by an `xlu_push` whose [4:3] is 3 |
+| `msa push`, `msa pop` | the multi-precision array: the systolic array on words of 32 bits that hold 1 single, 2 halves or 4 floats of 8 bits, so a column keeps `lanes` times that many weights. The field at 19:15 of a push says [4] weights or inputs, [3:2] how many columns compute (all of them, shifted right by it; the others give 0), [1:0] what a word holds (single, half, E4M3, E5M2). A weight push of another format or width empties the matrix. A pop takes what is there, as singles, halves, or 8-bit floats (E5M2 when its field's [1:0] is 3, E4M3 otherwise) |
 | `dma_config_desc`, `mvin`, `mvin2`, `mvin3`, `mvout` | a tensor of up to four dimensions between memory and the scratchpad, as the descriptor says: a mask, skip axes, a fill value, a bound on memory, an accumulating `mvout`, indices |
 
 It finds an instruction by the names the units give their encodings, so an
@@ -55,16 +56,17 @@ and is not touched by the timing face.
 Where the old Spike trapped, asserted or read past a buffer, the model ends
 the run with a line on standard error (`tpu: ...`, exit 1): a special function
 on a width it has no form for, a pop of more than was computed, an input push
-before any weight, a descriptor with a dimension of 0 or one that reaches past
-its tensor. As before, a transfer past the end of a lane's scratchpad ends the
-run with exit 200, and a cross-lane shuffle whose pattern is not as wide as
-its tile with exit 201.
+before any weight, a push to the multi-precision array of anything but words
+or of inputs packed otherwise than its weights, a descriptor with a dimension
+of 0 or one that reaches past its tensor. As before, a transfer past the end
+of a lane's scratchpad ends the run with exit 200, and a cross-lane shuffle
+whose pattern is not as wide as its tile with exit 201.
 
 Not carried over: what the old Spike printed under `SPIKE_DEBUG` and
 `SPIKE_XLU_DEBUG`, and the list of all-zero tiles it wrote under
-`SPIKE_DUMP_SPARSE_TILE`. A special function rounds its halves to nearest
-even; the old Spike used the rounding mode the last floating-point instruction
-left.
+`SPIKE_DUMP_SPARSE_TILE`. A special function, and a pop of the
+multi-precision array, round to nearest even; the old Spike used the rounding
+mode the last floating-point instruction left.
 
 `tests/tpu/functional/run.sh` checks it on Spike: each program prints what its
 instructions left, and the checksums in `from-old-spike.sha256` are of what the

@@ -25,11 +25,13 @@ class Misc {
   void reset() {}
 
  private:
-  // custom-2: lane number, compute. custom-1: DMA.
+  // custom-2: lane number, compute, the multi-precision array until it has a unit of its own. custom-1: DMA.
   static constexpr uint32_t FUNCTION = 0xFE00707F;
   static constexpr vcix_accel::Encoding ENCODINGS[] = {
       {0x0000305B, FUNCTION, "vlane_idx"},
       {0x0600305B, FUNCTION, "compute"},
+      {0x2A00305B, FUNCTION, "msa push"},
+      {0x0C00305B, FUNCTION, "msa pop"},
       {0x0200302B, FUNCTION, "mvin2"},
       {0x0400302B, FUNCTION, "mvin"},
       {0x0600302B, FUNCTION, "mvout"},
