@@ -47,7 +47,7 @@ gem5_bare_run() {
   "$GEM5" -d "$1" "$REPO/tests/contract/gem5_bare.py" --model "$2" "$3"
 }
 
-# spike_illegal <log> [insn as 8 hex digits]: the run ended as an illegal instruction.
+# spike_illegal <log> [insn as 8 hex digits]
 spike_illegal() {
   local insn=${2:-'[0-9a-f]{8}'}
   grep -Fxq 'An illegal instruction was executed!' "$1" &&

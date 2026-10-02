@@ -8,7 +8,6 @@ source "$HERE/versions.env"
 
 export DEBIAN_FRONTEND=noninteractive
 
-# $PYTHON is newer than the distribution's own; deadsnakes carries it.
 apt-get update
 apt-get install -y --no-install-recommends software-properties-common ca-certificates gnupg
 add-apt-repository -y ppa:deadsnakes/ppa
@@ -23,7 +22,6 @@ apt-get install -y --no-install-recommends \
   libboost-dev libboost-regex-dev libboost-system-dev device-tree-compiler
 rm -rf /var/lib/apt/lists/*
 
-# PyYAML for the interpreter gem5 embeds, which ships without pip.
 SITE="$("$PYTHON" -c 'import site; print(site.getsitepackages()[0])')"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT

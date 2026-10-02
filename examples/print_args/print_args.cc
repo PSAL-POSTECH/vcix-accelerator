@@ -1,5 +1,4 @@
-// Example: a unit that only observes. Claims all of custom-2 and custom-1 and prints what
-// each face is given; computes nothing.
+// Example model: owns custom-2 and custom-1, prints what each face is given, computes nothing.
 #include <algorithm>
 #include <cinttypes>
 #include <cstdio>
@@ -31,7 +30,6 @@ struct VcixOperands {
   bool any_vector() const { return vd_written || reads_vd() || reads_vs2() || reads_vs1(); }
 };
 
-// The fields under the names their opcode gives them: custom-1 is read as R-type.
 void print_fields(const char *who, const Insn &insn) {
   if (is_custom_1(insn))
     printf("[%s] insn=%08" PRIx32 " funct7=%02x rs2=%-2u rs1=%-2u funct3=%u rd=%-2u", who, insn.bits, insn.bits >> 25,
@@ -42,7 +40,7 @@ void print_fields(const char *who, const Insn &insn) {
   printf(" | vl=%u sew=%u lmul=2^%d", insn.vl, insn.sew_bits, insn.lmul_log2);
 }
 
-// The first elements of a vector register in lane 0, as stored: at most two.
+// At most the first two elements of the register in lane 0.
 void print_vreg(const Host &host, const Insn &insn, uint32_t reg) {
   const uint32_t bytes = insn.sew_bits / 8;
   const uint32_t count = std::min<uint32_t>(insn.vl, 2);
@@ -87,7 +85,6 @@ class PrintArgs : public Model {
   }
 
   bool can_accept(const Insn &, Cycle now) const override { return !in_flight_ && now >= busy_until_; }
-  // The configured cycles, once per register of the operand group of a vector operand.
   Cycle issue(const Insn &insn, Id, Cycle now) override {
     const bool vector = !is_custom_1(insn) && VcixOperands(insn).any_vector();
     Cycle cycles = latency_ * (vector ? group_size(insn) : 1);

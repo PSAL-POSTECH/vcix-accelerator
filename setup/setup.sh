@@ -1,18 +1,6 @@
 #!/usr/bin/env bash
-# Build the environment this repository runs in, from the pins in versions.env:
-# the RISC-V toolchain, the proxy kernel, Spike and gem5 -- then this repository.
-# Run from anywhere; system.sh (the system packages, as root) comes first.
-#
-#     ./setup/setup.sh                 everything
-#     ./setup/setup.sh -j 8            cap build parallelism      (default: nproc)
-#     ./setup/setup.sh spike repo      only those steps
-#
-# Steps, in order: toolchain, pk, spike, gem5, repo. Idempotent -- a step whose
-# pin is already built does nothing, and an interrupted build resumes.
-#
-# Everything lands under $VCIX_ENV_ROOT (default /opt/vcix-env); set it, or any
-# single location in versions.env, to build somewhere else. The run scripts read
-# the same file, so they find what this produced.
+# Build the environment from the pins in versions.env, then this repository; system.sh (as root) comes first.
+# Usage: setup/setup.sh [-j N] [toolchain|pk|spike|gem5|repo ...]      (default: every step, nproc jobs)
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -27,7 +15,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     -j) JOBS="$2"; shift 2 ;;
     -j*) JOBS="${1#-j}"; shift ;;
-    -h|--help) sed -n '2,15p' "${BASH_SOURCE[0]}" | sed 's/^# \?//'; exit 0 ;;
+    -h|--help) sed -n '2,3p' "${BASH_SOURCE[0]}" | sed 's/^# \?//'; exit 0 ;;
     -*) echo "unknown flag: $1" >&2; exit 2 ;;
     toolchain|pk|spike|gem5|repo) STEPS+=("$1"); shift ;;
     *) echo "unknown step: $1 (toolchain, pk, spike, gem5, repo)" >&2; exit 2 ;;

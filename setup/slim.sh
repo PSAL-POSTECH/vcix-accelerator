@@ -17,7 +17,7 @@ for tool in clang-check clang-repl clang-refactor clang-rename clang-scan-deps \
   rm -f "$TOOLCHAIN_ROOT/bin/$tool"
 done
 
-# An x86-64 ELF, by its header: the magic number, then e_machine 0x3e at byte 18.
+# Whether $1 is an x86-64 ELF.
 host_elf() {
   [ "$(od -An -tx1 -N4 "$1" | tr -d ' ')" = 7f454c46 ] \
     && [ "$(od -An -tx1 -j18 -N2 "$1" | tr -d ' ')" = 3e00 ]

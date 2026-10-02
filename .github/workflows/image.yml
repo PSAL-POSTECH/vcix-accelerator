@@ -55,7 +55,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # No docker/setup-buildx-action: its driver cannot start under podman on the runner.
       - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
