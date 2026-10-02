@@ -20,7 +20,6 @@ parser.add_argument("--ready-warn-cycles", type=int, help="each unit's vcixReady
 args = parser.parse_args()
 
 
-# The tag PyYAML's resolver gives a YAML null.
 YAML_NULL = "tag:yaml.org,2002:null"
 
 
@@ -84,7 +83,6 @@ m5.instantiate()
 event = m5.simulate(*([args.max_ticks] if args.max_ticks is not None else []))
 print(f"exit: {event.getCause()} at cycle {m5.curTick() // 1000}")
 
-# The cause gem5 gives when the program exits.
 PROGRAM_EXITED = "exiting with last active thread context"
 if event.getCause() != PROGRAM_EXITED:
     print(f"gem5_se.py: the simulation did not end with the program exiting: {event.getCause()}", file=sys.stderr)

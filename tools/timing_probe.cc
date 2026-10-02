@@ -1,5 +1,4 @@
-// Drives the timing face of one instance without gem5: N copies of one instruction, one at a time,
-// with tick in every cycle.
+// Drives the timing face of one instance without gem5: N copies of one instruction, one at a time.
 #include <dlfcn.h>
 
 #include <charconv>

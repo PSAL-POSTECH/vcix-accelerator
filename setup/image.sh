@@ -1,10 +1,6 @@
 #!/usr/bin/env bash
 # The container image of the environment: what it is called, and how it is built.
-#
-#     ./setup/image.sh ref               the image for this checkout's setup/
-#     ./setup/image.sh exists            exit 0 if the registry already has it
-#     ./setup/image.sh build [-j N]      build it locally
-#     ./setup/image.sh build --push      build it and publish it
+# Usage: setup/image.sh ref | exists | build [-j N] [--push]
 set -euo pipefail
 shopt -s inherit_errexit
 
@@ -47,5 +43,5 @@ case "${1:-}" in
       "$HERE"
     echo "$REF"
     ;;
-  *) sed -n '2,7p' "${BASH_SOURCE[0]}" | sed 's/^# \?//' >&2; exit 2 ;;
+  *) sed -n '2,3p' "${BASH_SOURCE[0]}" | sed 's/^# \?//' >&2; exit 2 ;;
 esac

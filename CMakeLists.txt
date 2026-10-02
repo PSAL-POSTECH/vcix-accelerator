@@ -8,7 +8,6 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 add_library(vcix_accel INTERFACE)
 target_include_directories(vcix_accel INTERFACE include)
 
-# A model library exports one symbol; everything else is hidden.
 function(vcix_accel_add_model name source)
   add_library(${name} SHARED ${source})
   target_link_libraries(${name} PRIVATE vcix_accel)
@@ -52,7 +51,6 @@ target_link_libraries(instances PRIVATE vcix_accel ${CMAKE_DL_LIBS})
 add_executable(timing_probe tools/timing_probe.cc)
 target_link_libraries(timing_probe PRIVATE vcix_accel ${CMAKE_DL_LIBS})
 
-# The Spike adapter is built against Spike's source tree and links its libriscv.a.
 set(SPIKE_SRC "" CACHE PATH "riscv-isa-sim source tree")
 set(SPIKE_BUILD "" CACHE PATH "riscv-isa-sim build directory (holds config.h)")
 if(SPIKE_SRC AND SPIKE_BUILD)

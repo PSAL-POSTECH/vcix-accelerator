@@ -21,7 +21,7 @@ using Cycle = vcix_cycle_t;
 using Encoding = vcix_encoding;
 using Insn = vcix_insn;
 using Id = vcix_id_t;
-// What issue returns when the cycle the result is ready is not known yet: ready() says when it is.
+// Returned by issue when the latency is not known yet: ready() says when the result is ready.
 constexpr Cycle Unknown = VCIX_LATENCY_UNKNOWN;
 
 inline uint32_t rd(const Insn &insn) { return (insn.bits >> 7) & 0x1f; }
@@ -41,9 +41,9 @@ class ConfigError : public std::runtime_error {
 class Config {
  public:
   explicit Config(const vcix_config *c) : c_(c) {}
-  // The value as written, or nullptr when the key is absent. Valid until configure returns.
+  // nullptr when the key is absent. Valid until configure returns.
   const char *get(const std::string &key) const { return c_->get(c_->ctx, key.c_str()); }
-  // The value as an unsigned decimal number; `fallback` only for an absent key.
+  // Unsigned decimal; `fallback` only for an absent key.
   uint64_t uint(const std::string &key, uint64_t fallback) const {
     const char *value = get(key);
     if (!value) return fallback;
@@ -57,7 +57,7 @@ class Config {
       throw ConfigError(key, value, "has a leading zero, which reads as octal or as decimal depending on the reader");
     return number;
   }
-  // The value as a hexadecimal number written 0x...; `fallback` only for an absent key.
+  // Written 0x...; `fallback` only for an absent key.
   uint64_t hex(const std::string &key, uint64_t fallback) const {
     const char *value = get(key);
     if (!value) return fallback;
@@ -98,8 +98,7 @@ class Host {
   const vcix_host *h_;
 };
 
-// name() and owns() are asked of a throwaway object: they cannot depend on configure or return its strings.
-// A model is copied: its state is its members, and the same calls give the same state.
+// Must be copyable with its state in its members. name() and owns() are asked of an object never configured.
 class Model {
  public:
   virtual ~Model() = default;
@@ -119,7 +118,7 @@ class Model {
   virtual void reset() {}
 
  protected:
-  // True while commit and tick are called again after a squash: what must happen once is skipped then.
+  // True while commit and tick are replayed after a squash: skip what must happen once.
   bool replaying() const { return replaying_; }
 
  private:
@@ -128,8 +127,7 @@ class Model {
   bool replaying_ = false;
 };
 
-// A model and what takes its issued instructions back: the copy made before each one, and the
-// commits since, replayed with every tick after the copy is put back.
+// Copies the model before each issue; a squash puts the copy back and replays the ticks and commits since.
 template <class M>
 class Instance {
   static_assert(std::is_copy_constructible<M>::value && std::is_copy_assignable<M>::value,
@@ -183,8 +181,8 @@ class Instance {
     Id id;
     Cycle cycle;
   };
-  std::deque<Issued> issued_;      // not committed, oldest first
-  std::deque<Committed> commits_;  // since the oldest of issued_
+  std::deque<Issued> issued_;
+  std::deque<Committed> commits_;
 };
 
 // The table of model M. No exception from M crosses the C boundary.
@@ -234,7 +232,6 @@ __attribute__((visibility("hidden"))) const vcix_model *export_model() {
   return &table;
 }
 
-// export_model, or NULL with the reason on stderr when M's constructor throws.
 template <class M>
 __attribute__((visibility("hidden"))) const vcix_model *export_model_or_null() {
   try {
@@ -249,7 +246,6 @@ __attribute__((visibility("hidden"))) const vcix_model *export_model_or_null() {
 
 }  // namespace vcix_accel
 
-// Defines the one symbol a model library exports, with default visibility.
 #define VCIX_ACCEL_REGISTER(ModelClass)                                                    \
   extern "C" __attribute__((visibility("default"))) const vcix_model *vcix_accel_model(void) { \
     return vcix_accel::export_model_or_null<ModelClass>();                                 \

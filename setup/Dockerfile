@@ -1,5 +1,4 @@
-# The environment this repository builds and runs in: the RISC-V toolchain, the
-# proxy kernel, and the pinned Spike and gem5, already built. Built by setup/image.sh.
+# The environment image: the RISC-V toolchain, pk, and the pinned Spike and gem5; built by setup/image.sh.
 ARG BASE_IMAGE
 
 FROM ${BASE_IMAGE} AS system
