@@ -36,12 +36,12 @@ rv_program() {
   riscv64-unknown-elf-gcc -static "${@:3}" "$2.o" -o "$2" || return
 }
 
-# spike_run <model.so> <machine.yml, or ""> <elf>
+# spike_run <model.so> <machine.yml, or ""> <elf> [spike options]
 spike_run() {
   local settings=("VCIX_ACCEL_MODEL=$1")
   [ -n "$2" ] && settings+=("VCIX_ACCEL_CONFIG=$2")
   env "${settings[@]}" "$SPIKE" --extlib="$BUILD/libvcix_spike.so" \
-    --isa=rv64gcv_zfh_xvcixaccel --varch=vlen:256,elen:64 "$PK" "$3"
+    --isa=rv64gcv_zfh_xvcixaccel --varch=vlen:256,elen:64 "${@:4}" "$PK" "$3"
 }
 
 # gem5_run <output-dir> <model.so> <machine.yml, or ""> <elf> [fixture options]

@@ -1,6 +1,6 @@
-// Spike adapter: the extension `vcixaccel` forwards every encoding the loaded
-// model owns to its functional face. The model is the .so named by VCIX_ACCEL_MODEL;
-// VCIX_ACCEL_CONFIG names the machine description (YAML) it is configured from.
+// Spike adapter: the extension `vcixaccel` forwards every encoding the loaded model owns
+// to its functional face. The model is the .so named by VCIX_ACCEL_MODEL; each hart has
+// its own instance, created from the machine description (YAML) VCIX_ACCEL_CONFIG names.
 #include <dlfcn.h>
 
 #include <cstdio>
@@ -21,6 +21,9 @@ namespace {
 const vcix_model *g_model = nullptr;
 
 processor_t *proc(void *ctx) { return static_cast<processor_t *>(ctx); }
+
+// The model instance of hart `p`.
+void *instance_of(processor_t *p);
 
 const vcix_host host_template = {
     nullptr,
@@ -47,7 +50,7 @@ reg_t dispatch(processor_t *p, insn_t insn, reg_t pc) {
   int vlmul = static_cast<int>(p->VU.vtype->read() & 0x7);
   vcix_insn decoded = {bits, static_cast<uint32_t>(p->VU.vl->read()), static_cast<uint32_t>(p->VU.vsew),
                        vlmul >= 4 ? vlmul - 8 : vlmul};
-  g_model->execute(g_model->self, &host, &decoded);
+  g_model->execute(instance_of(p), &host, &decoded);
   return pc + 4;
 }
 
@@ -83,24 +86,36 @@ const vcix_model *load_model() {
     fprintf(stderr, "vcixaccel: %s has ABI %u, adapter has %u\n", path, m->abi_version, VCIX_ACCEL_ABI_VERSION);
     exit(1);
   }
+  return m;
+}
+
+// A new instance of the loaded model, or the model's reason on stderr and exit 1.
+void *create_instance() {
   std::map<std::string, std::string> values = load_config();
   vcix_config config = {&values, [](void *ctx, const char *key) -> const char * {
                           auto &map = *static_cast<std::map<std::string, std::string> *>(ctx);
                           auto found = map.find(key);
                           return found == map.end() ? nullptr : found->second.c_str();
                         }};
-  m->configure(m->self, &config);
-  return m;
+  char error[256] = "";
+  void *self = g_model->create(&config, error, sizeof error);
+  if (!self) {
+    fprintf(stderr, "vcixaccel: %s: %s\n", g_model->name, error);
+    exit(1);
+  }
+  return self;
 }
 
 class vcix_accel_extension_t : public extension_t {
  public:
   vcix_accel_extension_t() {
     if (!g_model) g_model = load_model();
+    self = create_instance();
   }
+  ~vcix_accel_extension_t() override { g_model->destroy(self); }
   const char *name() override { return "vcixaccel"; }
   void reset() override {
-    if (g_model->reset) g_model->reset(g_model->self);
+    if (g_model->reset) g_model->reset(self);
   }
   std::vector<insn_desc_t> get_instructions() override {
     std::vector<insn_desc_t> insns;
@@ -118,7 +133,10 @@ class vcix_accel_extension_t : public extension_t {
     }
     return insns;
   }
+  void *self;
 };
+
+void *instance_of(processor_t *p) { return static_cast<vcix_accel_extension_t *>(p->get_extension("vcixaccel"))->self; }
 
 }  // namespace
 
