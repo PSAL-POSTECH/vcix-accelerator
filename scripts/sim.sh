@@ -28,12 +28,12 @@ BUILD="$(cd "$BUILD" && pwd)" || { echo "$BUILD: cannot resolve the build direct
 # riscv64-unknown-elf-gcc come from the caller's PATH.
 [ -d "$TOOLCHAIN_ROOT/bin" ] && PATH="$TOOLCHAIN_ROOT/bin:$PATH"
 
-# rv_program <source.S> <elf>: clang assembles (sf.vc.* mnemonics), gcc links.
+# rv_program <source.S> <elf> [link options]: clang assembles (sf.vc.* mnemonics), gcc links.
 # Earlier output is removed first, so a failed build leaves no ELF to run.
 rv_program() {
   rm -f "$2" "$2.o" || return
   clang --target=riscv64 -march=rv64gcv_xsfvcp -c "$1" -o "$2.o" || return
-  riscv64-unknown-elf-gcc -static "$2.o" -o "$2" || return
+  riscv64-unknown-elf-gcc -static "${@:3}" "$2.o" -o "$2" || return
 }
 
 # spike_run <model.so> <machine.yml, or ""> <elf>
@@ -49,6 +49,11 @@ gem5_run() {
   local description=()
   [ -n "$3" ] && description=(--config "$3")
   "$GEM5" -d "$1" "$REPO/examples/gem5_se.py" --model "$2" "${description[@]}" "${@:5}" "$4"
+}
+
+# gem5_bare_run <output-dir> <model.so> <elf>: bare metal in M mode, where a program can write mstatus.
+gem5_bare_run() {
+  "$GEM5" -d "$1" "$REPO/tests/contract/gem5_bare.py" --model "$2" "$3"
 }
 
 # Whether a run ended as an illegal instruction; the exit code alone cannot say.

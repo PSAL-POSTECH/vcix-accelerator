@@ -34,6 +34,7 @@ target_link_libraries(load_two PRIVATE vcix_accel ${CMAKE_DL_LIBS})
 # tests/contract: tables a caller must refuse, or take with members left NULL.
 vcix_accel_add_model(other_abi tests/contract/other_abi.cc)
 vcix_accel_add_model(no_configure tests/contract/no_configure.cc)
+vcix_accel_add_model(null_table tests/contract/null_table.cc)
 
 add_executable(timing_probe tools/timing_probe.cc)
 target_link_libraries(timing_probe PRIVATE vcix_accel ${CMAKE_DL_LIBS})
