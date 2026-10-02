@@ -39,6 +39,7 @@ target_link_libraries(load_two PRIVATE vcix_accel ${CMAKE_DL_LIBS})
 vcix_accel_add_model(other_abi tests/contract/other_abi.cc)
 vcix_accel_add_model(no_reset tests/contract/no_reset.cc)
 vcix_accel_add_model(null_table tests/contract/null_table.cc)
+vcix_accel_add_model(cannot_be_made tests/contract/cannot_be_made.cc)
 
 # tests/contract: instances of one library share no state.
 add_executable(instances tests/contract/instances.cc)
