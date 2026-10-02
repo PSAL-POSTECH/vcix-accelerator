@@ -28,7 +28,7 @@ times() { grep -Fxc "[tpu] $2" "$BUILD/tpu-$1.gem5.log"; }
 
 lines() { grep -c "^\[tpu\] $2 " "$BUILD/tpu-$1.gem5.log"; }
 
-for program in sfu one_cycle systolic_stream systolic_full; do
+for program in sfu one_cycle systolic_stream systolic_full xlu; do
   rv_program "$HERE/$program.S" "$BUILD/tpu-$program" || { echo "FAIL  $program.S does not build"; exit 2; }
 done
 printf 'tpu_trace: 1\ntpu_sfu_latency_cycles: 4\n' > "$BUILD/tpu-latency-4.yml"
@@ -88,6 +88,18 @@ full=$(said systolic_full \
 report "lines $full of $(lines systolic_full issue)" "lines 3 of 11" \
   "with the output queue full the array stops, and moves again in the cycle after a pop"
 
+echo "-- cross-lane unit, 4 lanes"
+on_gem5 xlu xlu "$HERE/systolic.yml"
+
+report "exit ${rc[xlu]}, lines $(said xlu "issue xlu_pop: 11 cycles after the last issue, 0 in flight")" \
+  "exit 0, lines 1" \
+  "after two pushes of four, the pop after the first is issued 4 + 8 - 1 cycles later: the XU's pass"
+report "lines $(said xlu "issue xlu_pop: 19 cycles after the last issue, 0 in flight")" "lines 1" \
+  "an all-gather of depth four takes the XU's 4 + 4 - 1 and the post-RPU's 2 x 4 + 4 cycles: 19"
+report "lines $(said xlu "issue xlu_pop: 26 cycles after the last issue, 0 in flight") of $(lines xlu issue)" \
+  "lines 1 of 12" \
+  "a push enters during a pass of 27 cycles, one cycle after the pop that started it, and the next pop waits for the pass"
+
 echo "-- one-cycle instructions"
 on_gem5 one_cycle one_cycle "$HERE/trace.yml"
 
@@ -99,7 +111,7 @@ drained=$(times one_cycle "issue xlu_push: 10 cycles after the last issue, 0 in 
 commits="$(said one_cycle "${one_cycle[@]}") of $(lines one_cycle commit)"
 report "exit ${rc[one_cycle]}, behind an empty model $drained, commits $commits" \
   "exit 0, behind an empty model 1, commits 10 of 11" \
-  "gem5 takes each custom-2 and DMA instruction of tpu::Misc and commits it one cycle after its issue"
+  "gem5 commits each instruction of tpu::Misc, and a push and the first pop of tpu::Xlu, one cycle after its issue"
 
 echo "-- the model"
 on_gem5 latency-0 sfu "$BUILD/tpu-latency-0.yml"

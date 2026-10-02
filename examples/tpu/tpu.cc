@@ -10,6 +10,7 @@
 #include "misc.hpp"
 #include "sfu.hpp"
 #include "systolic.hpp"
+#include "xlu.hpp"
 
 namespace {
 
@@ -21,7 +22,7 @@ class Tpu : public Model {
   std::vector<Encoding> owns() const override {
     std::vector<Encoding> all;
     for (const std::vector<Encoding> &unit :
-         {tpu::Sfu::encodings(), tpu::Misc::encodings(), tpu::Systolic::encodings()})
+         {tpu::Sfu::encodings(), tpu::Misc::encodings(), tpu::Systolic::encodings(), tpu::Xlu::encodings()})
       all.insert(all.end(), unit.begin(), unit.end());
     return all;
   }
@@ -31,6 +32,7 @@ class Tpu : public Model {
     sfu_.configure(config);
     misc_.configure(config);
     systolic_.configure(config);
+    xlu_.configure(config);
     functional_.configure(config);
   }
 
@@ -40,6 +42,7 @@ class Tpu : public Model {
     if (sfu_.owns(insn)) return sfu_.can_accept(insn, now);
     if (misc_.owns(insn)) return misc_.can_accept(insn, now);
     if (systolic_.owns(insn)) return systolic_.can_accept(insn, now);
+    if (xlu_.owns(insn)) return xlu_.can_accept(insn, now);
     return false;
   }
   Cycle issue(const Insn &insn, Id id, Cycle now) override {
@@ -47,6 +50,7 @@ class Tpu : public Model {
     if (sfu_.owns(insn)) return sfu_.issue(insn, id, now);
     if (misc_.owns(insn)) return misc_.issue(insn, id, now);
     if (systolic_.owns(insn)) return systolic_.issue(insn, id, now);
+    if (xlu_.owns(insn)) return xlu_.issue(insn, id, now);
     return 1;
   }
   void commit(const Insn &insn, Id id, Cycle now) override {
@@ -54,16 +58,19 @@ class Tpu : public Model {
     if (sfu_.owns(insn)) sfu_.commit(insn, id, now);
     if (misc_.owns(insn)) misc_.commit(insn, id, now);
     if (systolic_.owns(insn)) systolic_.commit(insn, id, now);
+    if (xlu_.owns(insn)) xlu_.commit(insn, id, now);
   }
   void tick(Cycle now) override {
     sfu_.tick(now);
     misc_.tick(now);
     systolic_.tick(now);
+    xlu_.tick(now);
   }
   void reset() override {
     sfu_.reset();
     misc_.reset();
     systolic_.reset();
+    xlu_.reset();
     functional_.reset();
     issued_any_ = false;
     last_issue_ = 0;
@@ -101,6 +108,7 @@ class Tpu : public Model {
   tpu::Sfu sfu_;
   tpu::Misc misc_;
   tpu::Systolic systolic_;
+  tpu::Xlu xlu_;
   tpu::Functional functional_;
 
   bool trace_ = false;
