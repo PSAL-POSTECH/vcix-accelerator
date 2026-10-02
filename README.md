@@ -329,8 +329,8 @@ adapters/gem5/            what the gem5 branch does; its code is in the gem5
 examples/print_args/      the example: a model, a program that exercises it,
                           a machine description, and a script that runs both
 examples/tpu/             a model made of units: the timing of a TPU's special-function
-                          unit, systolic array and one-cycle instructions, and what
-                          every instruction computes
+                          unit, systolic array, cross-lane unit and one-cycle
+                          instructions, and what every instruction computes
 examples/tpu/gem5/        the machine the tpu example is measured on: PyTorchSim's
                           gem5 CPU and memory configuration
 examples/gem5_se.py       the gem5 fixture the example and the tests run on
