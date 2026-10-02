@@ -18,7 +18,7 @@ report() {
 program() {
   rv_program "$HERE/$1.S" "$BUILD/$1" "${@:2}" || { echo "FAIL  $1.S does not build"; exit 2; }
 }
-for name in owned unowned nothing segfault returns3 pair forty queue speculated; do program $name; done
+for name in owned unowned nothing segfault returns3 pair forty queue speculated waited asleep stuck; do program $name; done
 program status -nostdlib -Wl,-N,-Ttext=0x80000000,--no-warn-rwx-segments
 
 echo "-- ownership"
@@ -284,6 +284,41 @@ right=$(said "$log" "issue: 1 issued, 1 committed, 0 ticks missing")
 issues=$(grep -c '^\[model\] issue: ' "$log")
 ok=0; [ "$rc" = 0 ] && [ "$first" = 1 ] && [ "$wrong" = 1 ] && [ "$right" = 1 ] && [ "$issues" -ge 3 ] && ok=1
 report $ok "gem5 takes back what it issued on a wrong path: the issue, and the ticks and the commit since (exit $rc, first $first of 1, wrong path $wrong of 1, right path $right of 1, issues $issues)"
+
+echo "-- result time unknown"
+
+# waited.S on waits: the pop's result is ready when the model says, not at a cycle told at issue.
+log="$BUILD/waited.gem5.log"
+gem5_run "$BUILD/m5out-waited" "$BUILD/libwaits.so" "" "$BUILD/waited" --max-ticks 100000000 > "$log" 2>&1; rc=$?
+behind=$(said "$log" "issue push, 1 pops waiting")
+ok=0; [ "$behind" = 1 ] && ok=1
+report $ok "gem5 issues what follows a pop while the pop waits for its result ($behind of 1)"
+
+reader=$(said "$log" "issue use, 0 pops waiting, the last pop ready 0 cycles ago")
+ok=0; [ "$reader" = 1 ] && ok=1
+report $ok "gem5 issues the reader of a pop's register in the cycle the model says the result is ready ($reader of 1)"
+
+left=$(said "$log" "commit pop, ready 0 cycles ago")
+ok=0; [ "$left" = 1 ] && ok=1
+report $ok "gem5 commits the pop in that cycle, not before ($left of 1)"
+
+pops=$(said "$log" "issue pop"); readers=$(grep -c '^\[model\] issue use, 0 pops waiting, ' "$log")
+ok=0; [ "$rc" = 0 ] && [ "$pops" = 2 ] && [ "$readers" = 2 ] && ok=1
+report $ok "gem5 frees the register of a pop squashed while it waited: its reader issues and the program ends (exit $rc, pops issued $pops of 2, readers issued $readers of 2)"
+
+# asleep.S on ready_only, a table with ready and no tick: the head of the queue waits for memory meanwhile.
+log="$BUILD/asleep.gem5.log"
+gem5_run "$BUILD/m5out-asleep" "$BUILD/libready_only.so" "" "$BUILD/asleep" --max-ticks 100000000 > "$log" 2>&1; rc=$?
+reader=$(said "$log" "issue use, 15 cycles after the pop")
+ok=0; [ "$rc" = 0 ] && [ "$reader" = 1 ] && ok=1
+report $ok "gem5 asks ready in every cycle, a model without tick and a core with nothing else to do included (exit $rc, reader issued fifteen cycles after the pop $reader of 1)"
+
+# stuck.S on waits: a pop that nothing feeds never has a result, and gem5 says so once.
+log="$BUILD/stuck.gem5.log"
+gem5_run "$BUILD/m5out-stuck" "$BUILD/libwaits.so" "" "$BUILD/stuck" --ready-warn-cycles 100 --max-ticks 30000000 > "$log" 2>&1; rc=$?
+warned=$(grep -c 'warn: .* its accelerator model has not said its result is ready 100 cycles after its issue$' "$log")
+ok=0; [ "$rc" != 0 ] && [ "$warned" = 1 ] && ok=1
+report $ok "gem5 warns once of an instruction whose result is never ready (exit $rc, warnings $warned of 1)"
 
 echo "-- processor state"
 

@@ -50,7 +50,7 @@ A model has two faces, and each simulator calls only its own:
 | Face       | Called by | Entry points                          | Answers                         |
 |------------|-----------|---------------------------------------|---------------------------------|
 | Functional | Spike     | `execute`                             | what values the instruction produces |
-| Timing     | gem5      | `can_accept`, `issue`, `commit`, `tick` | whether the unit can take the instruction now, when its result is ready, and what the unit's state is afterwards |
+| Timing     | gem5      | `can_accept`, `issue`, `commit`, `tick`, `ready` | whether the unit can take the instruction now, when its result is ready, and what the unit's state is afterwards |
 
 Stall and latency are delegated to the model. gem5 has one functional unit
 class for all of these instructions, and a unit of that class names the model
@@ -100,6 +100,7 @@ into one `.so`. It needs neither simulator's source tree.
 | `issue(insn, id, now)` | gem5 | cycles until the result is ready; the instruction enters the unit here, so the state changes |
 | `commit(insn, id, now)` | gem5 | nothing; the instruction can no longer be squashed (need not be overridden) |
 | `tick(now)` | gem5 | nothing; one cycle of the unit's own time (need not be overridden) |
+| `ready(id, now)` | gem5 | whether the result of an instruction issued as `Unknown` is ready; must not change state (need not be overridden) |
 | `reset()` | Spike | return to the state right after `configure` (need not be overridden) |
 
 `insn` is the instruction bits together with the vector configuration it was
@@ -175,8 +176,8 @@ table and that a hidden model calls its own `f16_to_f32`.
 
 The timing face is four events, and gem5 keeps to these rules:
 
-- Calls come in cycle order. Within a cycle `tick` is first, then `commit`,
-  then `can_accept` and `issue`.
+- Calls come in cycle order. Within a cycle `tick` is first, then `ready`,
+  then `commit`, then `can_accept` and `issue`.
 - `issue` follows a `can_accept` that returned true in the same cycle. Its
   answer is when the result is ready: an instruction that reads the result
   waits that long, and the instruction itself leaves the processor then or
@@ -211,6 +212,25 @@ time accepts when it has none, a pipelined unit accepts while it holds fewer
 than its depth, and a unit with a queue accepts while the queue has room. gem5
 bounds that decision: a unit with `vcixMaxInFlight` instructions in the
 processor (8192 unless the CPU config sets it) is issued no more.
+
+When the cycle a result is ready is not known at issue, `issue` returns
+`Unknown` and the model says so later:
+
+- From the next cycle on, after each `tick`, gem5 asks `ready(id, now)` for
+  that instruction, until it answers true; then it is not asked again.
+- In the cycle it answers true, an instruction that reads the result can be
+  issued, and the instruction itself can leave the processor if the ones
+  before it have left.
+- Until then it stays in flight, and so can be squashed like any other. What
+  comes after it is still issued, unless it reads the result.
+- Two such instructions writing one register are waited for together: a reader
+  of the later one is held until both are ready.
+- A model whose `ready` never turns true stalls the program without an error.
+  gem5 warns once for an instruction that has waited `vcixReadyWarnCycles`
+  cycles (a parameter of the unit, 1000000 by default, 0 for never).
+
+`tests/contract/waits.cc` is a unit whose pop is taken at once and waits
+inside for its data.
 
 Spike calls none of this. When the program exits, the simulation ends,
 whatever the unit is still doing. `tick` moves the model's own time only; it

@@ -21,6 +21,8 @@ using Cycle = vcix_cycle_t;
 using Encoding = vcix_encoding;
 using Insn = vcix_insn;
 using Id = vcix_id_t;
+// What issue returns when the cycle the result is ready is not known yet: ready() says when it is.
+constexpr Cycle Unknown = VCIX_LATENCY_UNKNOWN;
 
 inline uint32_t rd(const Insn &insn) { return (insn.bits >> 7) & 0x1f; }
 inline uint32_t rs1(const Insn &insn) { return (insn.bits >> 15) & 0x1f; }
@@ -107,11 +109,12 @@ class Model {
 
   virtual void execute(const Host &host, const Insn &insn) = 0;
 
-  // In a cycle: tick, then commit, then can_accept and issue. A squashed instruction was never issued.
+  // In a cycle: tick, then ready, then commit, then can_accept and issue. A squashed instruction was never issued.
   virtual bool can_accept(const Insn &insn, Cycle now) const = 0;
   virtual Cycle issue(const Insn &insn, Id id, Cycle now) = 0;
   virtual void commit(const Insn &, Id, Cycle) {}
   virtual void tick(Cycle) {}
+  virtual bool ready(Id, Cycle) const { return true; }
 
   virtual void reset() {}
 
@@ -225,6 +228,7 @@ __attribute__((visibility("hidden"))) const vcix_model *export_model() {
       [](void *s, Id first, Cycle n) { static_cast<Instance<M> *>(s)->squash(first, n); },
       [](void *s, const vcix_insn *i, Id id, Cycle n) { static_cast<Instance<M> *>(s)->commit(*i, id, n); },
       [](void *s, Cycle n) { static_cast<Instance<M> *>(s)->model.tick(n); },
+      [](void *s, Id id, Cycle n) -> int { return static_cast<const Instance<M> *>(s)->model.ready(id, n); },
       [](void *s) { static_cast<Instance<M> *>(s)->reset(); },
   };
   return &table;

@@ -1,5 +1,5 @@
 # Test fixture for the example and the tests: gem5's default MinorCPU pool plus the accelerator units.
-# Usage: gem5.opt gem5_se.py --model M.so [--config machine.yml] [--units N] [--max-in-flight N] [...] BINARY
+# Usage: gem5.opt gem5_se.py --model M.so [--config machine.yml] [--units N] [--max-in-flight N] [--ready-warn-cycles N] [...] BINARY
 import argparse
 import sys
 
@@ -16,6 +16,7 @@ parser.add_argument("--vlen", type=int, default=256)
 parser.add_argument("--max-ticks", type=int, help="stop the simulation after this many ticks")
 parser.add_argument("--units", type=int, default=1, help="accelerator units, each naming the model")
 parser.add_argument("--max-in-flight", type=int, help="each unit's vcixMaxInFlight, when not gem5's default")
+parser.add_argument("--ready-warn-cycles", type=int, help="each unit's vcixReadyWarnCycles, when not gem5's default")
 args = parser.parse_args()
 
 
@@ -43,6 +44,8 @@ settings = machine_description(args.config) if args.config else {}
 
 
 bound = {} if args.max_in_flight is None else {"vcixMaxInFlight": args.max_in_flight}
+if args.ready_warn_cycles is not None:
+    bound["vcixReadyWarnCycles"] = args.ready_warn_cycles
 
 
 class ExampleFUPool(MinorFUPool):

@@ -84,9 +84,18 @@ int main(int argc, char **argv) {
   };
   for (uint32_t i = 0; i < count; i++) {
     while (!m->can_accept(self, insn, now)) advance(1);
-    vcix_cycle_t lat = m->issue(self, insn, i + 1, now);
-    printf("insn %" PRIu32 ": issued at %" PRIu64 ", committed at %" PRIu64 "\n", i, now, now + lat);
-    advance(lat);
+    const vcix_cycle_t issued = now;
+    const vcix_cycle_t lat = m->issue(self, insn, i + 1, now);
+    if (lat != VCIX_LATENCY_UNKNOWN) {
+      advance(lat);
+    } else if (!m->ready) {
+      fprintf(stderr, "%s: issue returned VCIX_LATENCY_UNKNOWN and the table has no ready\n", argv[1]);
+      return 1;
+    } else {
+      do advance(1);
+      while (!m->ready(self, i + 1, now));
+    }
+    printf("insn %" PRIu32 ": issued at %" PRIu64 ", committed at %" PRIu64 "\n", i, issued, now);
     m->commit(self, insn, i + 1, now);
   }
   m->destroy(self);

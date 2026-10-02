@@ -54,7 +54,19 @@ the end of this page for what the other CPU models do.
    in-order queue at its head, so a squash always takes the whole list. That
    holds for one thread only: a CPU of more than one thread with an
    accelerator unit is refused.
-8. **Tick** — `Execute::evaluate` begins by calling `tick` with the current
+8. **Result not known at issue** — when `issue` returns
+   `VCIX_LATENCY_UNKNOWN`, the instruction's destination registers are marked
+   in the scoreboard as gem5 marks a load's, so a reader is not issued. After
+   each cycle's ticks `Execute` asks `ready` for every such instruction still
+   in flight; at the first true it frees the registers
+   (`Scoreboard::markInstDestsPredictable`, added for this). Until then the
+   instruction is not committed, even at the head of the in-order queue. One
+   squashed before it was ready has its registers freed when it leaves the
+   queue. A table without `ready` whose `issue` returns that value is fatal.
+   While one waits, Execute stays awake whether or not its model has `tick`,
+   and one that has waited `vcixReadyWarnCycles` cycles (a parameter of the
+   unit, 1000000 by default, 0 for never) is warned about once.
+9. **Tick** — `Execute::evaluate` begins by calling `tick` with the current
    cycle on every unit's model whose table has one, before that cycle's commit
    and issue, and ends by keeping the pipeline awake, so no cycle the CPU runs
    passes without it. A drain does not wait for a model. A program that exits
