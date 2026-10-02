@@ -40,13 +40,13 @@ vcix_accel_add_model(null_table tests/contract/null_table.cc)
 add_executable(timing_probe tools/timing_probe.cc)
 target_link_libraries(timing_probe PRIVATE vcix_accel ${CMAKE_DL_LIBS})
 
-# The Spike adapter is the only target that needs a simulator tree: Spike
-# installs no headers and does not export extension_t's typeinfo, so it is built
-# against the source tree and links libriscv.a the way Spike's own customext does.
+# The Spike adapter is the only target that needs a simulator tree: Spike installs
+# none of the headers an extension needs and does not export extension_t's typeinfo, so it
+# is built against the source tree and links libriscv.a the way Spike's own customext does.
 set(SPIKE_SRC "" CACHE PATH "riscv-isa-sim source tree")
 set(SPIKE_BUILD "" CACHE PATH "riscv-isa-sim build directory (holds config.h)")
 if(SPIKE_SRC AND SPIKE_BUILD)
-  # The adapter reads the machine description; a model never does.
+  # The Spike adapter reads the machine description itself, as YAML.
   include(FetchContent)
   set(YAML_CPP_BUILD_TESTS OFF CACHE BOOL "" FORCE)
   set(YAML_CPP_BUILD_TOOLS OFF CACHE BOOL "" FORCE)

@@ -51,6 +51,9 @@ else about the machine changes. The model is the same `.so` the Spike adapter
 loads. A config with no such unit cannot run these instructions at all, as with
 any OpClass that has no functional unit.
 
+The copy of the interface header, `src/cpu/minor/vcix_accel.h`, must stay
+byte-identical to `include/vcix_accel.h` here.
+
 A model is loaded with `dlopen(RTLD_NOW | RTLD_LOCAL)`. gem5 exports its own
 symbols, so a model's visible definition of a name gem5 also defines loses to
 gem5's; build the model hidden (see the top-level README). `RTLD_DEEPBIND`
