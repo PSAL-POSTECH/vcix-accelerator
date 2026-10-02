@@ -1,6 +1,9 @@
-// The special-function unit of the tpu model: erf, tanh, sin, cos, log, atan and exp of a vector; one instruction enters per cycle, its result ready a fixed number of cycles later.
+// The tpu model's special-function unit: one instruction per cycle, a fixed latency.
 #ifndef TPU_SFU_HPP
 #define TPU_SFU_HPP
+
+#include <iterator>
+#include <vector>
 
 #include "vcix_accel.hpp"
 
@@ -8,11 +11,11 @@ namespace tpu {
 
 class Sfu {
  public:
+  static std::vector<vcix_accel::Encoding> encodings() { return {std::begin(ENCODINGS), std::end(ENCODINGS)}; }
   bool owns(const vcix_accel::Insn &insn) const {
-    if ((insn.bits & 0x7F) != CUSTOM_2 || vcix_accel::funct3(insn) != OPIVI || vm(insn) != 0) return false;
-    const uint32_t function = funct6(insn);
-    return function == ERF || function == TANH || function == EXP ||
-           (function == SIN_COS_LOG_ATAN && vcix_accel::rs1(insn) <= ATAN);
+    for (const vcix_accel::Encoding &e : ENCODINGS)
+      if ((insn.bits & e.mask) == e.match) return true;
+    return false;
   }
   void configure(const vcix_accel::Config &config) {
     latency_ = config.uint(LATENCY_KEY, 10);
@@ -32,15 +35,18 @@ class Sfu {
   }
 
  private:
-  static constexpr uint32_t CUSTOM_2 = 0x5B;
-  static constexpr uint32_t OPIVI = 3;
-  // funct6 of sf.vc.v.iv; the last of the four field values under SIN_COS_LOG_ATAN is ATAN.
-  static constexpr uint32_t ERF = 0x8, TANH = 0x9, SIN_COS_LOG_ATAN = 0xA, EXP = 0xB;
-  static constexpr uint32_t ATAN = 3;
+  // sf.vc.v.iv on custom-2: opcode, funct3, funct6 and vm; FUNCTION_FIELD adds the field at 19:15.
+  static constexpr uint32_t FUNCTION = 0xFE00707F, FUNCTION_FIELD = 0xFE0FF07F;
+  static constexpr vcix_accel::Encoding ENCODINGS[] = {
+      {0x2000305B, FUNCTION, "verf"},
+      {0x2400305B, FUNCTION, "vtanh"},
+      {0x2800305B, FUNCTION_FIELD, "vsin"},
+      {0x2800B05B, FUNCTION_FIELD, "vcos"},
+      {0x2801305B, FUNCTION_FIELD, "vlog"},
+      {0x2801B05B, FUNCTION_FIELD, "vatan"},
+      {0x2C00305B, FUNCTION, "vexp"},
+  };
   static constexpr const char *LATENCY_KEY = "tpu_sfu_latency_cycles";
-
-  static uint32_t funct6(const vcix_accel::Insn &insn) { return insn.bits >> 26; }
-  static uint32_t vm(const vcix_accel::Insn &insn) { return (insn.bits >> 25) & 1; }
 
   vcix_accel::Cycle latency_ = 10;
   bool entered_ = false;

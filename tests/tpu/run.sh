@@ -28,7 +28,7 @@ times() { grep -Fxc "[tpu] $2" "$BUILD/tpu-$1.gem5.log"; }
 
 lines() { grep -c "^\[tpu\] $2 " "$BUILD/tpu-$1.gem5.log"; }
 
-for program in sfu one_cycle; do
+for program in sfu one_cycle systolic_stream systolic_full; do
   rv_program "$HERE/$program.S" "$BUILD/tpu-$program" || { echo "FAIL  $program.S does not build"; exit 2; }
 done
 printf 'tpu_trace: 1\ntpu_sfu_latency_cycles: 4\n' > "$BUILD/tpu-latency-4.yml"
@@ -59,6 +59,34 @@ report "$(chain sfu 10)" "readers 6, commits 6 and 11" \
   "gem5 issues the reader of a special function's result 10 cycles after it, down a chain of the seven"
 report "exit ${rc[latency-4]}, $(chain latency-4 4)" "exit 0, readers 6, commits 6 and 11" \
   "gem5 follows tpu_sfu_latency_cycles: 4 from the machine description"
+
+echo "-- systolic array, 4 lanes: 7 slots, queues of 8"
+on_gem5 systolic_stream systolic_stream "$HERE/systolic.yml"
+on_gem5 systolic_full systolic_full "$HERE/systolic.yml"
+
+delay=$(said systolic_full "issue systolic weight push: the first, input queue 0, output queue 0" \
+  "issue systolic input push: 1 cycles after the last issue, 0 in flight, input queue 0, output queue 0" \
+  "issue systolic pop: 11 cycles after the last issue, 0 in flight, input queue 0, output queue 4")
+report "exit ${rc[systolic_full]}, lines $delay" "exit 0, lines 3" \
+  "a pop of four is issued 4 + 7 cycles after the push of four, as the fourth element is in the output queue"
+
+pushes=("issue systolic input push: the first, input queue 0, output queue 0")
+for entries in 1 2 3 4 5 6; do
+  pushes+=("issue systolic input push: 1 cycles after the last issue, 0 in flight, input queue $entries, output queue 0")
+done
+for entries in 1 3 5; do
+  pushes+=("issue systolic input push: 2 cycles after the last issue, 0 in flight, input queue 6, output queue $entries")
+done
+stream="$(said systolic_stream "${pushes[@]}") of $(lines systolic_stream issue)"
+report "exit ${rc[systolic_stream]}, lines $stream" "exit 0, lines 10 of 10" \
+  "pushes of two go in one per cycle while the input queue has room, then one every two cycles, as the array drains"
+
+full=$(said systolic_full \
+  "issue systolic weight push: 1 cycles after the last issue, 0 in flight, input queue 1, output queue 8" \
+  "issue systolic pop: 1 cycles after the last issue, 0 in flight, input queue 1, output queue 8" \
+  "issue systolic weight push: 1 cycles after the last issue, 0 in flight, input queue 0, output queue 5")
+report "lines $full of $(lines systolic_full issue)" "lines 3 of 11" \
+  "with the output queue full the array stops, and moves again in the cycle after a pop"
 
 echo "-- one-cycle instructions"
 on_gem5 one_cycle one_cycle "$HERE/trace.yml"

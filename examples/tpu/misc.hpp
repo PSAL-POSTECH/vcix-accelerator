@@ -1,6 +1,9 @@
-// The instructions of the tpu model that have no timing of their own: each takes one cycle, and any number are taken in a cycle.
+// The tpu model's instructions with no timing of their own: one cycle each.
 #ifndef TPU_MISC_HPP
 #define TPU_MISC_HPP
+
+#include <iterator>
+#include <vector>
 
 #include "vcix_accel.hpp"
 
@@ -8,16 +11,10 @@ namespace tpu {
 
 class Misc {
  public:
+  static std::vector<vcix_accel::Encoding> encodings() { return {std::begin(ENCODINGS), std::end(ENCODINGS)}; }
   bool owns(const vcix_accel::Insn &insn) const {
-    if (vcix_accel::funct3(insn) != 3) return false;
-    const uint32_t opcode = insn.bits & 0x7F;
-    const uint32_t function = funct7(insn);
-    if (opcode == CUSTOM_1)
-      return function == MVIN2 || function == MVIN || function == MVOUT || function == CONFIG_DESC ||
-             function == MVIN3;
-    if (opcode == CUSTOM_2)
-      return function == VLANE_IDX || function == XLU_POP || function == COMPUTE || function == XLU_PUSH ||
-             function == XLU_PUSH_PATTERN;
+    for (const vcix_accel::Encoding &e : ENCODINGS)
+      if ((insn.bits & e.mask) == e.match) return true;
     return false;
   }
   void configure(const vcix_accel::Config &) {}
@@ -28,14 +25,20 @@ class Misc {
   void reset() {}
 
  private:
-  static constexpr uint32_t CUSTOM_1 = 0x2B, CUSTOM_2 = 0x5B;
-  // custom-2: funct6 and vm, as the seven bits they are.
-  static constexpr uint32_t VLANE_IDX = 0x00, XLU_POP = 0x02, COMPUTE = 0x03, XLU_PUSH = 0x17,
-                            XLU_PUSH_PATTERN = 0x57;
-  // custom-1: funct7 of the DMA's instructions.
-  static constexpr uint32_t MVIN2 = 1, MVIN = 2, MVOUT = 3, CONFIG_DESC = 7, MVIN3 = 14;
-
-  static uint32_t funct7(const vcix_accel::Insn &insn) { return insn.bits >> 25; }
+  // custom-2: lane number, compute, cross-lane unit. custom-1: DMA.
+  static constexpr uint32_t FUNCTION = 0xFE00707F;
+  static constexpr vcix_accel::Encoding ENCODINGS[] = {
+      {0x0000305B, FUNCTION, "vlane_idx"},
+      {0x0600305B, FUNCTION, "compute"},
+      {0x2E00305B, FUNCTION, "xlu_push"},
+      {0xAE00305B, FUNCTION, "xlu_push_pattern"},
+      {0x0400305B, FUNCTION, "xlu_pop"},
+      {0x0200302B, FUNCTION, "mvin2"},
+      {0x0400302B, FUNCTION, "mvin"},
+      {0x0600302B, FUNCTION, "mvout"},
+      {0x0E00302B, FUNCTION, "dma_config_desc"},
+      {0x1C00302B, FUNCTION, "mvin3"},
+  };
 };
 
 }  // namespace tpu
