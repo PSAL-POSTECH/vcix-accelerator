@@ -283,9 +283,11 @@ Not code, only where the model is:
 | gem5 | one `MinorVcixAccelFU` in the CPU's functional unit pool | that unit's `vcixModel = "<path>"` | that unit's `vcixConfigKeys` / `vcixConfigValues`; the config script reads the same YAML |
 
 `MinorVcixAccelFU` is defined in the gem5 branch, beside gem5's own units. A
-machine's CPU config stays wherever it already lives and gains that one unit;
-this repository keeps no CPU config of its own. `examples/gem5_se.py` is only a
-fixture, for the example and the tests: gem5's default pool plus the one unit.
+machine's CPU config stays wherever it already lives and gains that one unit.
+`examples/gem5_se.py` is only a fixture, for the example and the tests: gem5's
+default pool plus the one unit. `examples/tpu/gem5/` is a whole machine, the
+CPU and memory configuration PyTorchSim measures on, with the one unit naming
+the tpu model.
 
 ## Constraints the interface is built around
 
@@ -329,7 +331,11 @@ examples/print_args/      the example: a model, a program that exercises it,
 examples/tpu/             a model made of units: the timing of a TPU's special-function
                           unit, systolic array and one-cycle instructions, and what
                           every instruction computes
+examples/tpu/gem5/        the machine the tpu example is measured on: PyTorchSim's
+                          gem5 CPU and memory configuration
 examples/gem5_se.py       the gem5 fixture the example and the tests run on
+examples/machine_description.py
+                          how a gem5 config script reads the machine description
 tools/timing_probe.cc     drives a model's timing face without gem5
 tests/run.sh              every test below
 tests/contract/           the rules of the interface: ownership, the machine

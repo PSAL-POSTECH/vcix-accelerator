@@ -3,10 +3,10 @@
 import argparse
 import sys
 
-import yaml
-
 import m5
 from m5.objects import *
+
+from machine_description import machine_description
 
 parser = argparse.ArgumentParser()
 parser.add_argument("binary")
@@ -19,28 +19,7 @@ parser.add_argument("--max-in-flight", type=int, help="each unit's vcixMaxInFlig
 parser.add_argument("--ready-warn-cycles", type=int, help="each unit's vcixReadyWarnCycles, when not gem5's default")
 args = parser.parse_args()
 
-
-YAML_NULL = "tag:yaml.org,2002:null"
-
-
-# The machine description as vcix_config in include/vcix_accel.h defines it.
-def machine_description(path):
-    with open(path) as f:
-        root = next(yaml.compose_all(f, Loader=yaml.SafeLoader), None)
-    if root is None:
-        return {}
-    if not isinstance(root, yaml.MappingNode):
-        print(f"gem5_se.py: {path}: the top level of a machine description is a mapping", file=sys.stderr)
-        sys.exit(1)
-    return {
-        key.value: value.value
-        for key, value in root.value
-        if isinstance(key, yaml.ScalarNode) and isinstance(value, yaml.ScalarNode) and value.tag != YAML_NULL
-    }
-
-
 settings = machine_description(args.config) if args.config else {}
-
 
 bound = {} if args.max_in_flight is None else {"vcixMaxInFlight": args.max_in_flight}
 if args.ready_warn_cycles is not None:

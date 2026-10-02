@@ -113,4 +113,11 @@ report "exit $?" "exit 0" "spike runs sfu.S to the program's exit"
 echo "-- what it computes"
 "$HERE/functional/run.sh" "$BUILD" "$SPIKE" "$PK" || failed=1
 
+echo "-- the machine PyTorchSim measures on (examples/tpu/gem5)"
+timeout 300 "$GEM5" -d "$BUILD/m5out-tpu-machine" "$REPO/examples/tpu/gem5/script_systolic.py" -c "$BUILD/tpu-sfu" \
+  --model "$BUILD/libtpu.so" --machine-config "$HERE/trace.yml" > "$BUILD/tpu-machine.gem5.log" 2>&1
+rc[machine]=$?
+report "exit ${rc[machine]}, $(chain machine 10)" "exit 0, readers 6, commits 6 and 11" \
+  "script_systolic.py runs sfu.S to the program's exit, the reader of a special function's result issued 10 cycles after it"
+
 exit $failed
