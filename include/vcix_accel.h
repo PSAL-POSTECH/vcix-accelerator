@@ -15,7 +15,7 @@ extern "C" {
 typedef uint64_t vcix_cycle_t;
 
 /* An instruction belongs to the model when (bits & mask) == match. `name` is
- * what a disassembler prints for it; it is never NULL. */
+ * what a disassembler prints for it; never NULL. */
 typedef struct vcix_encoding {
   uint32_t match;
   uint32_t mask;
@@ -41,25 +41,11 @@ typedef struct vcix_pending {
   vcix_cycle_t ready;  /* issued + the latency the model answered */
 } vcix_pending;
 
-/* The machine description, as the adapter read it. The model does not know
- * the file or its format; the adapters do, and both must give the same answer
- * for the same file. The file is YAML, and the rule is:
- *
- *   - The description is the top-level mapping of the file's first document.
- *     A file with no document (empty, or only comments) is an empty
- *     description. A top level that is not a mapping is refused by the adapter.
- *   - get(key) returns the value of a top-level key "as written": the text of
- *     the scalar, with YAML's quoting undone and no typing applied. `8`, "8"
- *     and '8' are all the text 8; `010` is the text 010, not a number; "null"
- *     in quotes is the text null.
- *   - A key is "absent", and get(key) returns NULL, when the file has no such
- *     key, when its value is YAML null (nothing after the colon, `~`, `null`),
- *     or when its value is a mapping or a sequence. What is null is decided by
- *     the YAML library's resolver, never by comparing text: "" in quotes is a
- *     string, so that key is present and its text is empty.
- *
- * The config and every string get returns belong to the adapter and are valid
- * only until configure returns; the model copies what it keeps. */
+/* The machine description, read by the adapter. get(key) is the text of a
+ * top-level scalar as written, with no typing, or NULL when the key is missing
+ * or its value is YAML null, a mapping or a sequence. Both adapters must give
+ * the same answer for the same file. The config and the strings it returns are
+ * valid only until configure returns. */
 typedef struct vcix_config {
   void *ctx;
   const char *(*get)(void *ctx, const char *key);
@@ -81,22 +67,10 @@ typedef struct vcix_host {
   void (*mem_write)(void *ctx, uint64_t addr, const void *src, size_t bytes);
 } vcix_host;
 
-/* The table a model library hands over. vcix_accel_model() returns the same
- * table on every call. The table, `name`, `encodings` and each encoding's
- * `name` stay valid and unchanged for as long as the library is loaded, so a
- * simulator may keep the pointers and need not copy the strings.
- *
- * A caller reads abi_version first, and when it is not VCIX_ACCEL_ABI_VERSION
- * reads nothing else: the layout below is this version's only.
- *
- * Which members may be NULL is said here and nowhere else:
- *   - `configure` and `reset` may be NULL, meaning the model has nothing to do
- *     there. A caller checks each of the two before calling it.
- *   - `encodings` may be NULL only when num_encodings is 0.
- *   - `self` is the model's own and is passed back as it is, NULL or not.
- *   - `name`, `execute`, `can_accept`, `latency` and `commit` are never NULL.
- *     A model has both faces, because one library is loaded by both
- *     simulators. */
+/* The table a model library hands over. It and its strings stay valid while
+ * the library is loaded. A caller reads abi_version first, and nothing else if
+ * it differs. `configure` and `reset` may be NULL; `encodings` only when
+ * num_encodings is 0; `name` and the other functions never. */
 typedef struct vcix_model {
   uint32_t abi_version;
   const char *name;
@@ -105,34 +79,26 @@ typedef struct vcix_model {
   const vcix_encoding *encodings;
   size_t num_encodings;
 
-  /* Called once by either simulator, after loading and before any other
-   * function of this table. `name` and `encodings` are read before it: they
-   * are fixed when vcix_accel_model() returns, so a model's name and the
-   * instructions it owns cannot depend on the machine description.
-   * The config is valid only during the call. May be NULL. */
+  /* Called once, before any other function of this table. `name` and
+   * `encodings` are fixed before it, so they cannot depend on the machine
+   * description. May be NULL. */
   void (*configure)(void *self, const vcix_config *config);
 
   /* Functional face. Called by the functional simulator only. */
   void (*execute)(void *self, const vcix_host *host, const vcix_insn *insn);
 
   /* Timing face. Called by the timing simulator only; it sees no data.
-   * can_accept and latency are asked when the instruction is issued and must
-   * not change state: an issued instruction may be squashed and issued again.
-   * They are given the instructions already issued and not yet committed, so
-   * the answer can account for what is in flight; an accepted instruction
-   * does not hold the unit, and how many may be in flight is the model's to
-   * decide. latency is asked only of an instruction can_accept just accepted.
-   * commit is called once, when the instruction commits without a fault, and
-   * is where the timing state changes. vl, SEW and LMUL arrive with the
-   * instruction, so latency can depend on how much data it moves. */
+   * can_accept and latency are asked at issue, with the instructions in flight
+   * (issued, not yet committed), and must not change state: an issued
+   * instruction may be squashed and issued again. commit is called once, when
+   * the instruction commits without a fault, and is where state changes. */
   int (*can_accept)(void *self, const vcix_insn *insn, vcix_cycle_t now, const vcix_pending *pending,
                     size_t num_pending);
   vcix_cycle_t (*latency)(void *self, const vcix_insn *insn, vcix_cycle_t now, const vcix_pending *pending,
                           size_t num_pending);
   void (*commit)(void *self, const vcix_insn *insn, vcix_cycle_t now);
 
-  /* Back to the state the model was in when configure returned; what configure
-   * read stays. May be called any number of times. May be NULL. */
+  /* Back to the state configure left. May be called more than once. May be NULL. */
   void (*reset)(void *self);
 } vcix_model;
 

@@ -1,9 +1,6 @@
 #!/usr/bin/env bash
-# Two model libraries whose model classes have the same global name, loaded into
-# one process as a simulator loads them, must each answer with a table of their
-# own. Runs on the host: no simulator is involved.
-# Usage: tests/two_models/run.sh [build-dir [spike [pk [gem5.opt]]]]
-# Each defaults to what setup/setup.sh produced; see scripts/sim.sh.
+# Two model libraries whose model classes share a global name must each have a table
+# of their own. Host only. Usage: tests/two_models/run.sh [build-dir [spike [pk [gem5.opt]]]]
 set -uo pipefail
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 source "$HERE/../../scripts/sim.sh"

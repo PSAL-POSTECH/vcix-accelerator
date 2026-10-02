@@ -1,7 +1,5 @@
 // Drives the timing face without gem5: N copies of one instruction, one at a
-// time (nothing is ever in flight). Each is issued when the model accepts it and
-// committed latency cycles later. A caller of the table like the adapters, and
-// held to the same contract: see vcix_model in vcix_accel.h.
+// time. Each is issued when the model accepts it and committed latency cycles later.
 #include <dlfcn.h>
 
 #include <charconv>
@@ -39,7 +37,6 @@ int main(int argc, char **argv) {
   if (!parse<uint32_t>(hex, 16, 0, UINT32_MAX, bits)) return usage(argv[0], "an instruction: 32 bits in hex", argv[2]);
   uint32_t count = 4;
   if (argc > 3 && !parse<uint32_t>(argv[3], 10, 0, UINT32_MAX, count)) return usage(argv[0], "a count", argv[3]);
-  // The range vcix_insn gives LMUL; a model may shift by it.
   int32_t lmul_log2 = 0;
   if (argc > 4 && !parse<int32_t>(argv[4], 10, -3, 3, lmul_log2)) return usage(argv[0], "an lmul-log2, -3 to 3", argv[4]);
 
@@ -67,8 +64,6 @@ int main(int argc, char **argv) {
     return 1;
   }
 
-  // As gem5 does when it builds the CPU: configure, here from an empty machine
-  // description, then reset.
   vcix_config no_config = {nullptr, [](void *, const char *) -> const char * { return nullptr; }};
   if (m->configure) m->configure(m->self, &no_config);
   if (m->reset) m->reset(m->self);

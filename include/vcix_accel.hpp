@@ -41,9 +41,8 @@ inline uint32_t funct3(const Insn &insn) { return (insn.bits >> 12) & 0x7; }
 // Registers in one vector operand's group.
 inline uint32_t group_size(const Insn &insn) { return insn.lmul_log2 > 0 ? 1u << insn.lmul_log2 : 1u; }
 
-// A value of the machine description that the model cannot use. Thrown out of
-// Model::configure it stops the run: see export_model. Config::uint throws it,
-// and a model may throw it for a value it reads itself.
+// A value of the machine description the model cannot use. Thrown from
+// configure, it stops the run.
 class ConfigError : public std::runtime_error {
  public:
   ConfigError(const std::string &key, const std::string &value, const std::string &why)
@@ -53,11 +52,10 @@ class ConfigError : public std::runtime_error {
 class Config {
  public:
   explicit Config(const vcix_config *c) : c_(c) {}
-  // The value as written in the machine description, or nullptr when the key
-  // is absent. The pointer is valid only until configure returns.
+  // The value as written, or nullptr when the key is absent. Valid until configure returns.
   const char *get(const std::string &key) const { return c_->get(c_->ctx, key.c_str()); }
-  // The value as an unsigned decimal number. `fallback` is for an absent key
-  // and nothing else: text that is not such a number throws ConfigError.
+  // The value as an unsigned decimal number; `fallback` only for an absent key.
+  // Text that is not such a number throws ConfigError.
   uint64_t uint(const std::string &key, uint64_t fallback) const {
     const char *value = get(key);
     if (!value) return fallback;
@@ -67,7 +65,6 @@ class Config {
     if (parsed.ec == std::errc::invalid_argument || parsed.ptr != end)
       throw ConfigError(key, value, "is not an unsigned decimal number");
     if (parsed.ec == std::errc::result_out_of_range) throw ConfigError(key, value, "does not fit in 64 bits");
-    // 010 is eight to a YAML 1.1 reader and ten to a YAML 1.2 one.
     if (value[0] == '0' && end - value > 1)
       throw ConfigError(key, value, "has a leading zero, which reads as octal or as decimal depending on the reader");
     return number;
@@ -100,10 +97,8 @@ class Host {
   const vcix_host *h_;
 };
 
-// name() and owns() are asked once, when the library is loaded and before
-// configure, so neither can depend on the machine description. The strings they
-// hand out (the name, each Encoding's name) must live as long as the library:
-// string literals do. configure and reset need not be overridden.
+// name() and owns() are asked once, before configure, so they cannot depend on
+// the machine description. The strings they return must outlive the library.
 class Model {
  public:
   virtual ~Model() = default;
@@ -120,15 +115,8 @@ class Model {
   virtual void reset() {}
 };
 
-// A ConfigError from configure ends the process here, with the model's name,
-// the key and the value on stderr and exit status 1, which is how both adapters
-// end a run they cannot set up. The C ABI's configure returns nothing, so the
-// wrapper has no way to hand the error to the simulator instead.
-//
-// The model object and its table are this library's alone: with default
-// visibility the statics below are unique symbols, which the dynamic linker
-// merges across every library in the process, so a second model library whose
-// class has the same name would answer with the first one's table.
+// The table of model M, this library's alone. A ConfigError from configure ends
+// the process with a message: the C ABI's configure cannot report it.
 template <class M>
 __attribute__((visibility("hidden"))) const vcix_model *export_model() {
   static M model;
@@ -163,9 +151,7 @@ __attribute__((visibility("hidden"))) const vcix_model *export_model() {
 
 }  // namespace vcix_accel
 
-// Defines the one symbol a model library exports. It is given default
-// visibility here, so a model is built with -fvisibility=hidden, as it should
-// be, without its author exporting anything by hand.
+// Defines the one symbol a model library exports, with default visibility.
 #define VCIX_ACCEL_REGISTER(ModelClass)                                                    \
   extern "C" __attribute__((visibility("default"))) const vcix_model *vcix_accel_model(void) { \
     return vcix_accel::export_model<ModelClass>();                                         \

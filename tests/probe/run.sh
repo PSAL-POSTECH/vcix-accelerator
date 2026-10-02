@@ -1,11 +1,7 @@
 #!/usr/bin/env bash
-# tools/timing_probe is a caller of the model table like the adapters, and is
-# held to the same contract (include/vcix_accel.h): it refuses another ABI
-# version and an instruction the model does not own, takes a table whose
-# configure and reset are NULL, and rejects arguments that are not numbers.
-# Runs on the host: no simulator is involved.
-# Usage: tests/probe/run.sh [build-dir [spike [pk [gem5.opt]]]]
-# Each defaults to what setup/setup.sh produced; see scripts/sim.sh.
+# tools/timing_probe obeys the table's contract: it refuses another ABI version and an
+# unowned instruction, takes NULL configure/reset, and rejects malformed arguments.
+# Host only. Usage: tests/probe/run.sh [build-dir [spike [pk [gem5.opt]]]]
 set -uo pipefail
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 source "$HERE/../../scripts/sim.sh"
@@ -16,7 +12,6 @@ UNOWNED_INSN=0a2541db
 failed=0
 
 # probe <what> <want exit code> <want issued instructions> <timing_probe arguments...>
-# An issued instruction is one line of the probe's own: "insn <n>: issued at ...".
 probe() {
   local what=$1 want_rc=$2 want_issued=$3 rc issued
   shift 3
