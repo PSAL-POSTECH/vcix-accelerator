@@ -6,6 +6,7 @@
 
 #include "vcix_accel.hpp"
 
+#include "functional.hpp"
 #include "misc.hpp"
 #include "sfu.hpp"
 #include "systolic.hpp"
@@ -30,10 +31,10 @@ class Tpu : public Model {
     sfu_.configure(config);
     misc_.configure(config);
     systolic_.configure(config);
+    functional_.configure(config);
   }
 
-  // The functional face is written elsewhere.
-  void execute(const Host &, const Insn &) override {}
+  void execute(const Host &host, const Insn &insn) override { functional_.execute(host, insn); }
 
   bool can_accept(const Insn &insn, Cycle now) const override {
     if (sfu_.owns(insn)) return sfu_.can_accept(insn, now);
@@ -63,6 +64,7 @@ class Tpu : public Model {
     sfu_.reset();
     misc_.reset();
     systolic_.reset();
+    functional_.reset();
     issued_any_ = false;
     last_issue_ = 0;
     in_flight_.clear();
@@ -99,6 +101,7 @@ class Tpu : public Model {
   tpu::Sfu sfu_;
   tpu::Misc misc_;
   tpu::Systolic systolic_;
+  tpu::Functional functional_;
 
   bool trace_ = false;
   // Kept only under trace_; no answer to the simulator reads them.

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The tpu example's timing. Usage: tests/tpu/run.sh [build-dir [spike [pk [gem5.opt]]]]
+# The tpu example: its timing on gem5, then what it computes on Spike (functional/run.sh). Usage: tests/tpu/run.sh [build-dir [spike [pk [gem5.opt]]]]
 set -uo pipefail
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 source "$HERE/../../scripts/sim.sh"
@@ -109,5 +109,8 @@ report "exit ${rc[latency-0]}, reason given $why" "exit 1, reason given 1" "gem5
 
 spike_run "$BUILD/libtpu.so" "" "$BUILD/tpu-sfu" > "$BUILD/tpu-sfu.spike.log" 2>&1
 report "exit $?" "exit 0" "spike runs sfu.S to the program's exit"
+
+echo "-- what it computes"
+"$HERE/functional/run.sh" "$BUILD" "$SPIKE" "$PK" || failed=1
 
 exit $failed
