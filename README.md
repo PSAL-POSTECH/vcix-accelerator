@@ -10,7 +10,8 @@ project its name), and custom-1, read as R-type on integer registers.
 
 A user who wants to add a new accelerator writes **one shared library** that
 describes both what the accelerator computes and how long it takes. They do not
-patch Spike, and they do not patch gem5.
+patch Spike, and they do not patch gem5: each was changed once, to load such a
+library.
 
 Without this, adding a unit means editing two simulators by hand, in two
 different styles:
@@ -35,9 +36,12 @@ Spike adapter         one extension that registers the encodings the model owns
 gem5 adapter          two decode entries, one OpClass, one functional unit class
 ```
 
-- **Spike is not modified.** The adapter is an extension Spike loads with
-  `--extlib`. It is built against the Spike fork pinned in
-  `setup/versions.env`, whose vector unit has lanes.
+- **Spike is modified once**, in branch `vcix` of `PSAL-POSTECH/riscv-isa-sim`,
+  the Spike whose vector unit has lanes. It has no accelerator unit of its own:
+  the extension `vcixaccel`, built into it, hands every instruction of the two
+  opcodes that a loaded model owns to that model. It reads the machine
+  description itself (`--machine-config`) and refuses an extension whose
+  encodings overlap an instruction it implements. See `adapters/spike/`.
 - **gem5 is modified once**, in a branch that starts over from upstream gem5.
   It has a decode entry for each of the two opcodes, one `OpClass`
   (`VcixAccel`), one functional unit class (`MinorVcixAccelFU`), and code in
@@ -80,8 +84,8 @@ There are three kinds of code here. Only the first is yours.
             ^ the same .so is loaded by both simulators ^
 +-- provided, written once -----+  +-- provided, written once ------+
 |  Spike adapter                |  |  gem5 adapter                  |
-|  libvcix_spike.so             |  |  branch vcix of the gem5 repo  |
-|  (adapters/spike)             |  |  (see adapters/gem5)           |
+|  branch vcix of the Spike repo|  |  branch vcix of the gem5 repo  |
+|  (see adapters/spike)         |  |  (see adapters/gem5)           |
 +-------------------------------+  +--------------------------------+
 ```
 
@@ -126,7 +130,7 @@ the scalar's text with no typing applied: `010` arrives as the text `010`.
 "Absent" covers a key the file does not have, a key whose value is YAML null
 (`k:`, `k: ~`, `k: null`) and a key whose value is not a scalar; `k: ""` is
 present, with empty text. `tests/contract` holds both simulators to this rule.
-The model never sees the file. On Spike the adapter reads it; on gem5 the
+The model never sees the file. Spike reads it (`--machine-config`); on gem5 the
 config script reads it and passes keys and values as parameters, so gem5 parses
 no file. This repository defines no configuration format of its own; the file
 is the machine description a setup already has.
@@ -275,7 +279,7 @@ Not code, only where the model is:
 
 | Simulator | How the adapter is enabled | How the model is named | How the machine description is given |
 |---|---|---|---|
-| Spike | `--extlib=libvcix_spike.so` and the ISA suffix `_xvcixaccel` | environment variable `VCIX_ACCEL_MODEL=<path>` | environment variable `VCIX_ACCEL_CONFIG=<yaml>`; the adapter reads it |
+| Spike | the ISA suffix `_xvcixaccel` | `--extlib=<path>` | `--machine-config=<yaml>`; Spike reads it, and takes its lanes, scratchpad and VLEN from it |
 | gem5 | one `MinorVcixAccelFU` in the CPU's functional unit pool | that unit's `vcixModel = "<path>"` | that unit's `vcixConfigKeys` / `vcixConfigValues`; the config script reads the same YAML |
 
 `MinorVcixAccelFU` is defined in the gem5 branch, beside gem5's own units. A
@@ -316,7 +320,8 @@ fixture, for the example and the tests: gem5's default pool plus the one unit.
 include/vcix_accel.h      the C ABI: vcix_model, vcix_insn,
                           vcix_config, vcix_host, vcix_encoding
 include/vcix_accel.hpp    C++ wrapper: subclass Model, VCIX_ACCEL_REGISTER
-adapters/spike/           the Spike extension `vcixaccel`
+adapters/spike/           what the Spike branch does; its code is in the Spike
+                          repository
 adapters/gem5/            what the gem5 branch does; its code is in the gem5
                           repository
 examples/print_args/      the example: a model, a program that exercises it,
@@ -374,8 +379,9 @@ docker run --rm -it -v "$PWD":/work -w /work "$(setup/image.sh ref)" bash
 ```
 
 `setup/image.sh build` builds the same image locally. It holds the toolchain,
-pk, Spike (source and build tree, which the adapter is built against) and the
-gem5 binary, but nothing of this repository: a checkout is built inside it.
+pk, Spike (the binary, and its source for the copy of the header the tests
+compare) and the gem5 binary, but nothing of this repository: a checkout is
+built inside it.
 
 **The scripts**, on Ubuntu 22.04:
 
@@ -391,24 +397,24 @@ steps.
 ## Build and run
 
 ```
-scripts/build.sh                 # cmake + ninja into build/, against the Spike above
+scripts/build.sh                 # cmake + ninja into build/
 tests/run.sh                     # every test; non-zero if any fails
 examples/print_args/run.sh       # the example, printing what each face is given
 ```
 
 The run scripts use the simulators the setup produced. To use others, pass them
 -- `tests/run.sh <build-dir> <spike> <pk> <gem5.opt>` -- or set `SPIKE`, `PK`,
-`GEM5`; `scripts/build.sh` takes the Spike tree from `SPIKE_ROOT`.
+`GEM5`; `SPIKE_ROOT` is the source tree of that Spike, whose copy of the header
+`tests/contract` compares with this one.
 
 By hand, the build is
 
 ```
-cmake -G Ninja -S . -B build -DSPIKE_SRC=<riscv-isa-sim> -DSPIKE_BUILD=<riscv-isa-sim>/build
+cmake -G Ninja -S . -B build
 ninja -C build
 ```
 
-Without `SPIKE_SRC` and `SPIKE_BUILD` only the models and the probe are built;
-a model needs no simulator tree.
+It needs no simulator tree: the models, the probe and nothing else are built.
 
 How each simulator is given the adapter, the model and the machine description
 is in the table under "What you configure, per run"; `scripts/sim.sh` is where
@@ -416,12 +422,12 @@ the run scripts keep both command lines.
 
 ## Status
 
-- Interface: ABI version 7 (`VCIX_ACCEL_ABI_VERSION`); an adapter refuses a
-  model of another version. The gem5 branch carries a copy of
-  `include/vcix_accel.h` (`src/cpu/minor/vcix_accel.h`) that must be kept
-  identical to this one.
-- Spike adapter: working. It does not yet check the table for NULL, nor refuse
-  a machine description that is not a mapping; `tests/contract` runs those
-  cases on gem5 only.
+- Interface: ABI version 9 (`VCIX_ACCEL_ABI_VERSION`); a simulator refuses a
+  model of another version. Each simulator carries a copy of
+  `include/vcix_accel.h` (Spike `riscv/vcix_accel.h`, gem5
+  `src/cpu/minor/vcix_accel.h`) that must be kept identical to this one;
+  `tests/contract` compares Spike's.
+- Spike adapter: working; branch `vcix` of `PSAL-POSTECH/riscv-isa-sim`
+  (see `adapters/spike/`).
 - gem5 adapter: working, on MinorCPU only; branch `vcix` of
   `PSAL-POSTECH/gem5`, on upstream gem5 25.1.0.1 (see `adapters/gem5/`).

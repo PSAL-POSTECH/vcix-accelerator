@@ -6,10 +6,8 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=versions.env
 source "$HERE/versions.env"
 
-find "$SPIKE_BUILD" \( -name '*.o' -o -name '*.gch' \) -delete
-rm -f "$SPIKE_BUILD/libspike_main.a" "$SPIKE_BUILD/libspike_dasm.a"
-test -f "$SPIKE_BUILD/libriscv.a"
-rm -rf "$SPIKE_ROOT/.git" "$PK_ROOT"
+# Of Spike the installed binary is used, and riscv/vcix_accel.h of its source, which the tests compare with ours.
+rm -rf "$SPIKE_BUILD" "$SPIKE_ROOT/.git" "$PK_ROOT"
 
 for tool in clang-check clang-repl clang-refactor clang-rename clang-scan-deps \
             clang-extdef-mapping clang-linker-wrapper clang-offload-bundler \
@@ -30,8 +28,7 @@ strip_tree() {
   done < <(find "$@" -type f -print0)
 }
 
-strip_tree "$SPIKE_BUILD" "$SPIKE_PREFIX" \
-  "$TOOLCHAIN_ROOT/bin" "$TOOLCHAIN_ROOT/libexec"
-strip --strip-debug "$SPIKE_BUILD"/*.a "$SPIKE_PREFIX"/lib/*.a
+strip_tree "$SPIKE_PREFIX" "$TOOLCHAIN_ROOT/bin" "$TOOLCHAIN_ROOT/libexec"
+strip --strip-debug "$SPIKE_PREFIX"/lib/*.a
 
 du -sh "$VCIX_ENV_ROOT"/*

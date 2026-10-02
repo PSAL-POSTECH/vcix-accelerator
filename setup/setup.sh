@@ -80,7 +80,6 @@ if want spike; then
   make -j"$JOBS"
   make install
   test -x "$SPIKE_BIN" || { echo "spike did not land at $SPIKE_BIN" >&2; exit 1; }
-  test -f "$SPIKE_BUILD/libriscv.a" || { echo "no libriscv.a in $SPIKE_BUILD" >&2; exit 1; }
   echo "  $SPIKE_BIN"
 fi
 

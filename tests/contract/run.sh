@@ -28,14 +28,22 @@ verdict() {
   missed=()
 }
 
-for name in unowned pair forty queue speculated waited asleep status; do
+for name in unowned pair forty queue speculated waited asleep vstart status; do
   options=(); [ $name = status ] && options=(-nostdlib -Wl,-N,-Ttext=0x80000000,--no-warn-rwx-segments)
   rv_program "$HERE/$name.S" "$BUILD/$name" "${options[@]}" || { echo "FAIL  $name.S does not build"; exit 2; }
 done
-printf 'latency: 8 cycles\n' > "$BUILD/malformed.yml"
+# What Spike takes its machine from; gem5 has its own in its configuration.
+MACHINE='vpu_num_lanes: 4\nvpu_spad_size_kb_per_lane: 128\nvpu_vector_length_bits: 256\n'
+printf "${MACHINE}latency: 8 cycles\n" > "$BUILD/malformed.yml"
 printf -- '- plain: 8\n' > "$BUILD/not_a_mapping.yml"
 printf 'latency: 10\ndepth: 1\n' > "$BUILD/one_at_a_time.yml"
 printf 'latency: 100\n' > "$BUILD/slow.yml"
+
+echo "-- one header"
+log="$BUILD/header.log"
+cmp "$REPO/include/vcix_accel.h" "$SPIKE_ROOT/riscv/vcix_accel.h" > "$log" 2>&1; rc=$?
+ended 0
+verdict "Spike's copy of vcix_accel.h, in $SPIKE_ROOT/riscv, is this repository's"
 
 echo "-- ownership"
 for sim in spike gem5; do
@@ -67,10 +75,12 @@ for sim in spike gem5; do
   part 0 "[model] "
   verdict "$sim stops at a malformed number, naming the model, the key and the value"
 done
-run gem5 not_a_mapping reports "$BUILD/not_a_mapping.yml" pair
-ended 1
-part 0 "[config] "
-verdict "gem5 refuses a description whose top level is not a mapping"
+for sim in spike gem5; do
+  run $sim not_a_mapping reports "$BUILD/not_a_mapping.yml" pair
+  ended 1
+  part 0 "[config] "
+  verdict "$sim refuses a description whose top level is not a mapping"
+done
 
 echo "-- model table and instances"
 log="$BUILD/direct.log"
@@ -94,10 +104,20 @@ for sim in spike gem5; do
   ended 0
   verdict "$sim runs a table written by hand, tick, ready and reset NULL"
 done
-run gem5 null_table null_table "" pair
+for sim in spike gem5; do
+  run $sim null_table null_table "" pair
+  ended 1
+  part 1 "libnull_table.so: vcix_accel_model() returned no table"
+  verdict "$sim refuses a library that hands over no table"
+done
+run spike other_abi other_abi "" pair
 ended 1
-part 1 "libnull_table.so: vcix_accel_model() returned no table"
-verdict "gem5 refuses a library that hands over no table"
+part 1 "libother_abi.so has ABI 10, Spike has 9"
+verdict "spike refuses a table of another ABI version"
+run spike cannot_be_made cannot_be_made "" pair
+ended 1
+line 1 "vcix_accel: the model cannot be made: no such unit can be built"
+verdict "spike refuses a model whose constructor throws, after the model said why"
 
 run gem5 units reports "$BUILD/one_at_a_time.yml" pair --units 2
 ended 0
@@ -173,6 +193,10 @@ part 0 "[model] issue use: "
 verdict "gem5 warns once of a result that is never ready"
 
 echo "-- processor state"
+run spike vstart print_args "" vstart
+ended 0
+verdict "spike: vstart reads 0 after a model's instruction that began with vstart 3"
+
 log="$BUILD/status.gem5.log"
 gem5_bare_run "$BUILD/m5out-status" "$BUILD/libprint_args.so" "$BUILD/status" > "$log" 2>&1; rc=$?
 ended 0

@@ -11,7 +11,7 @@ SPIKE="${2:-${SPIKE:-$SPIKE_BIN}}"
 PK="${3:-${PK:-$PK_BIN}}"
 GEM5="${4:-${GEM5:-$GEM5_BIN}}"
 
-for needed in "$BUILD/libvcix_spike.so" "$SPIKE" "$PK" "$GEM5"; do
+for needed in "$BUILD" "$SPIKE" "$PK" "$GEM5"; do
   [ -e "$needed" ] && continue
   echo "$needed: not found -- run setup/setup.sh, or pass [build-dir [spike [pk [gem5.opt]]]]" >&2
   exit 2
@@ -28,11 +28,11 @@ rv_program() {
 }
 
 # spike_run <model.so> <machine.yml, or ""> <elf> [spike options]
+# A machine description says the lanes, the scratchpad and VLEN; without one, VLEN is given here.
 spike_run() {
-  local settings=("VCIX_ACCEL_MODEL=$1")
-  [ -n "$2" ] && settings+=("VCIX_ACCEL_CONFIG=$2")
-  env "${settings[@]}" "$SPIKE" --extlib="$BUILD/libvcix_spike.so" \
-    --isa=rv64gcv_zfh_xvcixaccel --varch=vlen:256,elen:64 "${@:4}" "$PK" "$3"
+  local machine=(--varch=vlen:256,elen:64)
+  [ -n "$2" ] && machine=("--machine-config=$2")
+  "$SPIKE" --extlib="$1" --isa=rv64gcv_zfh_xvcixaccel "${machine[@]}" "${@:4}" "$PK" "$3"
 }
 
 # gem5_run <output-dir> <model.so> <machine.yml, or ""> <elf> [fixture options]

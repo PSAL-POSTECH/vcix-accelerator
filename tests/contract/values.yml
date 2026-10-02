@@ -1,4 +1,7 @@
 # One key for each way a value can be written, and a second document that is not the description; values.expected is what the reports model must be given.
+vpu_num_lanes: 4
+vpu_spad_size_kb_per_lane: 128
+vpu_vector_length_bits: 256
 plain: 8
 quoted: "8"
 empty:
