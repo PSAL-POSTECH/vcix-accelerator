@@ -31,7 +31,11 @@ the end of this page for what the other CPU models do.
    `issue cycle + latency`, as gem5's own unit-less instructions do. Both calls
    are given the unit's instructions in flight. When several units own an
    instruction, it goes to the first in the pool that accepts it. An
-   instruction no model owns goes through unasked.
+   instruction no model owns goes through unasked. A unit that already has
+   `vcixMaxInFlight` instructions in flight (a parameter of the unit, 64 by
+   default, at least 1) is issued no more and its model is not asked: the
+   in-order queue is sized to hold that many for each unit, and a model that
+   accepts without limit would otherwise outgrow it.
 6. **Commit** — in order, and not before that cycle. An instruction the model
    does not own becomes an illegal instruction here, on the same path as any
    other. Otherwise the instruction's own checks run first, through the
