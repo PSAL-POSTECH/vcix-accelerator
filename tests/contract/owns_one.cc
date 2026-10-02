@@ -14,15 +14,17 @@ class OwnsOne : public Model {
   std::vector<Encoding> owns() const override { return {{0x0600405B, 0xFE00707F, "owned"}}; }
 
   void execute(const Host &, const Insn &insn) override { report("execute", insn); }
-  bool can_accept(const Insn &insn, Cycle, const Pending &) const override {
+  bool can_accept(const Insn &insn, Cycle) const override {
     report("accept", insn);
     return true;
   }
-  Cycle latency(const Insn &insn, Cycle, const Pending &) const override {
+  Cycle issue(const Insn &insn, Id, Cycle) override {
     report("issue", insn);
     return 1;
   }
-  void commit(const Insn &insn, Cycle) override { report("commit", insn); }
+  void commit(const Insn &insn, Id, Cycle) override {
+    if (!replaying()) report("commit", insn);
+  }
 
  private:
   void report(const char *entry, const Insn &insn) const {

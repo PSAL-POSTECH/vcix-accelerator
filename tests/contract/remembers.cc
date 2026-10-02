@@ -17,22 +17,28 @@ class Remembers : public Model {
 
   void configure(const Config &) override { report("configure"); }
   void execute(const Host &, const Insn &) override { report("execute"); }
-  bool can_accept(const Insn &, Cycle, const Pending &pending) const override { return pending.empty(); }
-  Cycle latency(const Insn &, Cycle, const Pending &) const override {
+  bool can_accept(const Insn &, Cycle) const override { return !in_flight_; }
+  Cycle issue(const Insn &, Id, Cycle) override {
     report("issue");
+    in_flight_ = true;
     return LATENCY + commits_;
   }
-  void commit(const Insn &, Cycle) override {
+  void commit(const Insn &, Id, Cycle) override {
+    in_flight_ = false;
     commits_++;
-    report("commit");
+    if (!replaying()) report("commit");
   }
-  void reset() override { commits_ = 0; }
+  void reset() override {
+    in_flight_ = false;
+    commits_ = 0;
+  }
 
  private:
   void report(const char *entry) const {
     printf("[model] %s, commits seen %" PRIu64 "\n", entry, commits_);
     fflush(stdout);
   }
+  bool in_flight_ = false;
   uint64_t commits_ = 0;
 };
 

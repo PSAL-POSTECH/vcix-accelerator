@@ -31,9 +31,9 @@ class ShowsConfig : public Model {
   }
 
   void execute(const Host &, const Insn &) override {}
-  bool can_accept(const Insn &, Cycle, const Pending &) const override { return true; }
-  Cycle latency(const Insn &, Cycle, const Pending &) const override { return 1; }
-  void commit(const Insn &, Cycle) override {}
+  bool can_accept(const Insn &, Cycle) const override { return true; }
+  Cycle issue(const Insn &, Id, Cycle) override { return 1; }
+  void commit(const Insn &, Id, Cycle) override {}
 };
 
 }  // namespace

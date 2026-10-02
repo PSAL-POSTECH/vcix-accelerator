@@ -41,7 +41,8 @@ gem5 adapter          two decode entries, one OpClass, one functional unit class
 - **gem5 is modified once**, in a branch that starts over from upstream gem5.
   It has a decode entry for each of the two opcodes, one `OpClass`
   (`VcixAccel`), one functional unit class (`MinorVcixAccelFU`), and code in
-  the MinorCPU's `Execute` that asks the model at issue and tells it at commit.
+  the MinorCPU's `Execute` that tells the model what happens to each
+  instruction -- issued, committed, squashed -- and ticks it every cycle.
   None of it is about a particular accelerator.
 
 A model has two faces, and each simulator calls only its own:
@@ -49,7 +50,7 @@ A model has two faces, and each simulator calls only its own:
 | Face       | Called by | Entry points                          | Answers                         |
 |------------|-----------|---------------------------------------|---------------------------------|
 | Functional | Spike     | `execute`                             | what values the instruction produces |
-| Timing     | gem5      | `can_accept`, `latency`, `commit`     | whether the unit can take the instruction now, when its result is ready, and what the unit's state is afterwards |
+| Timing     | gem5      | `can_accept`, `issue`, `commit`, `tick` | whether the unit can take the instruction now, when its result is ready, and what the unit's state is afterwards |
 
 Stall and latency are delegated to the model. gem5 has one functional unit
 class for all of these instructions, and a unit of that class names the model
@@ -72,8 +73,9 @@ There are three kinds of code here. Only the first is yours.
 |    owns()         which encodings are mine                        |
 |    execute()      what the instruction computes   <- Spike calls  |
 |    can_accept()   can the unit take it now        <- gem5 calls   |
-|    latency()      cycles until the result is ready <- gem5 calls  |
-|    commit()       it ran; update the unit's state  <- gem5 calls  |
+|    issue()        it enters; when is its result ready <- gem5     |
+|    commit()       it can no longer be taken back   <- gem5 calls  |
+|    tick()         a cycle passed                   <- gem5 calls  |
 +-------------------------------------------------------------------+
             ^ the same .so is loaded by both simulators ^
 +-- provided, written once -----+  +-- provided, written once ------+
@@ -94,9 +96,10 @@ into one `.so`. It needs neither simulator's source tree.
 | `owns()` | both | the `{match, mask}` encodings that belong to this model |
 | `configure(config)` | both | nothing; read the machine's numbers by key (need not be overridden) |
 | `execute(host, insn)` | Spike | what the instruction does to registers and memory, through `host` |
-| `can_accept(insn, now, pending)` | gem5 | whether the unit can start this instruction in this cycle; must not change state |
-| `latency(insn, now, pending)` | gem5 | cycles until the result is ready; must not change state |
-| `commit(insn, now)` | gem5 | nothing; this is where the timing state changes, once per instruction that really ran |
+| `can_accept(insn, now)` | gem5 | whether the unit can take this instruction in this cycle; must not change state |
+| `issue(insn, id, now)` | gem5 | cycles until the result is ready; the instruction enters the unit here, so the state changes |
+| `commit(insn, id, now)` | gem5 | nothing; the instruction can no longer be squashed (need not be overridden) |
+| `tick(now)` | gem5 | nothing; one cycle of the unit's own time (need not be overridden) |
 | `reset()` | Spike | return to the state right after `configure` (need not be overridden) |
 
 `insn` is the instruction bits together with the vector configuration it was
@@ -170,22 +173,65 @@ that was not built hidden needs `-Wl,-Bsymbolic` on the model's link line as
 well. `tests/contract` checks that two same-named models each get their own
 table and that a hidden model calls its own `f16_to_f32`.
 
-`can_accept` and `latency` are asked when gem5 issues the instruction, and an
-issued instruction can be squashed and issued again, so they may be called more
-than once for an instruction that runs once. Only `commit` is one-to-one with
-the program, and it is the only place the model's state changes.
+The timing face is four events, and gem5 keeps to these rules:
 
-An accepted instruction does not hold the unit. It is in flight from its issue
-until its commit, `latency` cycles later or when the instructions before it
-have committed, whichever is later. `pending` is the list of this instance's
-instructions in flight, oldest first, each with the cycle it was issued and the
-cycle it will be ready; gem5 keeps the list and drops squashed instructions
-from it. So how many instructions overlap is the model's decision: a unit that
-takes one at a time accepts only when `pending` is empty, a pipelined unit
-accepts while `pending` is shorter than its depth, and a unit with a queue
-counts the pushes in flight. gem5 bounds that decision: a unit with
-`vcixMaxInFlight` instructions in flight (8192 unless the CPU config sets it) is
-issued no more, and the model is not asked until one commits.
+- Calls come in cycle order. Within a cycle `tick` is first, then `commit`,
+  then `can_accept` and `issue`.
+- `issue` follows a `can_accept` that returned true in the same cycle. Its
+  answer is when the result is ready: an instruction that reads the result
+  waits that long, and the instruction itself leaves the processor then or
+  when the instructions before it have left, whichever is later.
+- `commit` is called once for every instruction that really ran, in the order
+  they were issued. `id` names the instruction in both calls.
+- `tick(now)` is called once in every cycle the processor runs, whether or not
+  an instruction is in flight.
+- **A squashed instruction was never issued.** gem5 issues instructions before
+  it knows they will run, and takes them back after a mispredicted branch. The
+  model does not see that: write `issue` as if every issued instruction runs.
+
+The last rule is kept by copying. The wrapper copies the model before each
+`issue`; when gem5 squashes, it puts the copy back and calls `tick` and
+`commit` again for the cycles and the commits since. So a model must be
+copyable, keep all its state in its members, and reach the same state from the
+same calls. `issue` and `can_accept` are never called again. In `tick` and
+`commit`, what must happen once -- a line of output -- is skipped while
+`replaying()` is true.
+
+The state may change in `issue`, in `commit` and in `tick`:
+
+| Put an effect in | and it lands |
+|---|---|
+| `issue` | in the cycle the instruction enters the unit |
+| `commit` | when the instruction can no longer be squashed, which the instructions before it can delay |
+| `tick` | every cycle |
+
+An accepted instruction does not hold the unit: how many overlap is the model's
+decision, made in `can_accept` from its own state. A unit that takes one at a
+time accepts when it has none, a pipelined unit accepts while it holds fewer
+than its depth, and a unit with a queue accepts while the queue has room. gem5
+bounds that decision: a unit with `vcixMaxInFlight` instructions in the
+processor (8192 unless the CPU config sets it) is issued no more.
+
+Spike calls none of this. When the program exits, the simulation ends,
+whatever the unit is still doing. `tick` moves the model's own time only; it
+asks nothing of the memory system. In a table written by hand `tick` may be
+NULL, and `squash` is the model's to implement.
+
+A queue of two commands, worked on one at a time for ten cycles each
+(`tests/contract/queued.cc` is this model, with an instruction that waits for
+the queue to empty):
+
+```cpp
+bool can_accept(const Insn &, Cycle) const override { return queue_.size() < 2; }
+Cycle issue(const Insn &, Id, Cycle) override {
+  queue_.push_back(10);
+  return 1;
+}
+void tick(Cycle) override {
+  if (!queue_.empty() && --queue_.front() == 0) queue_.pop_front();
+}
+std::deque<Cycle> queue_;  // cycles left of each command, the one worked on first
+```
 
 The model has two sets of methods because the two simulators know different
 things: Spike knows values and not time, gem5 knows time and not values. They
@@ -221,9 +267,9 @@ fixture, for the example and the tests: gem5's default pool plus the one unit.
 
 - **The timing face cannot see data.** gem5 does not compute vector values for
   these instructions, so the timing face may depend only on the instruction
-  (its bits, `vl`, SEW, LMUL) and on state the model tracks itself in `commit`
-  (for example, how many pushes a queue has taken). Data-dependent latency is
-  out of scope.
+  (its bits, `vl`, SEW, LMUL) and on state the model tracks itself in `issue`,
+  `commit` and `tick` (for example, how many commands a queue holds). Data-dependent
+  latency is out of scope.
 - **The two faces run in different processes.** A Spike run and a gem5 run share
   nothing at run time. Functional state and timing state live in the same model
   class but must not depend on each other.
@@ -247,7 +293,7 @@ fixture, for the example and the tests: gem5's default pool plus the one unit.
 ## Layout
 
 ```
-include/vcix_accel.h      the C ABI: vcix_model, vcix_insn, vcix_pending,
+include/vcix_accel.h      the C ABI: vcix_model, vcix_insn,
                           vcix_config, vcix_host, vcix_encoding
 include/vcix_accel.hpp    C++ wrapper: subclass Model, VCIX_ACCEL_REGISTER
 adapters/spike/           the Spike extension `vcixaccel`
@@ -259,8 +305,8 @@ examples/gem5_se.py       the gem5 fixture the example and the tests run on
 tools/timing_probe.cc     drives a model's timing face without gem5
 tests/run.sh              every test below
 tests/contract/           the rules of the interface: ownership, the machine
-                          description, the model table, instances, processor
-                          state, and the test harness
+                          description, the model table, instances, tick,
+                          processor state, and the test harness
 tests/pipeline/           a pipelined model overlaps instructions on gem5
 tests/print_args/         the example reaches the model once per instruction
 setup/                    the pinned environment: versions.env, the scripts
@@ -345,7 +391,7 @@ the run scripts keep both command lines.
 
 ## Status
 
-- Interface: ABI version 6 (`VCIX_ACCEL_ABI_VERSION`); an adapter refuses a
+- Interface: ABI version 7 (`VCIX_ACCEL_ABI_VERSION`); an adapter refuses a
   model of another version. The gem5 branch carries a copy of
   `include/vcix_accel.h` (`src/cpu/minor/vcix_accel.h`) that must be kept
   identical to this one.

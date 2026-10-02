@@ -5,10 +5,12 @@
 #include <charconv>
 #include <cstdio>
 #include <cstring>
+#include <deque>
 #include <memory>
 #include <stdexcept>
 #include <string>
 #include <system_error>
+#include <type_traits>
 #include <vector>
 
 #include "vcix_accel.h"
@@ -18,21 +20,7 @@ namespace vcix_accel {
 using Cycle = vcix_cycle_t;
 using Encoding = vcix_encoding;
 using Insn = vcix_insn;
-
-// The instructions issued to this instance and not yet committed, oldest first.
-class Pending {
- public:
-  Pending(const vcix_pending *first, size_t count) : first_(first), count_(count) {}
-  size_t size() const { return count_; }
-  bool empty() const { return count_ == 0; }
-  const vcix_pending &operator[](size_t i) const { return first_[i]; }
-  const vcix_pending *begin() const { return first_; }
-  const vcix_pending *end() const { return first_ + count_; }
-
- private:
-  const vcix_pending *first_;
-  size_t count_;
-};
+using Id = vcix_id_t;
 
 inline uint32_t rd(const Insn &insn) { return (insn.bits >> 7) & 0x1f; }
 inline uint32_t rs1(const Insn &insn) { return (insn.bits >> 15) & 0x1f; }
@@ -109,6 +97,7 @@ class Host {
 };
 
 // name() and owns() are asked of a throwaway object: they cannot depend on configure or return its strings.
+// A model is copied: its state is its members, and the same calls give the same state.
 class Model {
  public:
   virtual ~Model() = default;
@@ -118,11 +107,81 @@ class Model {
 
   virtual void execute(const Host &host, const Insn &insn) = 0;
 
-  virtual bool can_accept(const Insn &insn, Cycle now, const Pending &pending) const = 0;
-  virtual Cycle latency(const Insn &insn, Cycle now, const Pending &pending) const = 0;
-  virtual void commit(const Insn &insn, Cycle now) = 0;
+  // In a cycle: tick, then commit, then can_accept and issue. A squashed instruction was never issued.
+  virtual bool can_accept(const Insn &insn, Cycle now) const = 0;
+  virtual Cycle issue(const Insn &insn, Id id, Cycle now) = 0;
+  virtual void commit(const Insn &, Id, Cycle) {}
+  virtual void tick(Cycle) {}
 
   virtual void reset() {}
+
+ protected:
+  // True while commit and tick are called again after a squash: what must happen once is skipped then.
+  bool replaying() const { return replaying_; }
+
+ private:
+  template <class M>
+  friend class Instance;
+  bool replaying_ = false;
+};
+
+// A model and what takes its issued instructions back: the copy made before each one, and the
+// commits since, replayed with every tick after the copy is put back.
+template <class M>
+class Instance {
+  static_assert(std::is_copy_constructible<M>::value && std::is_copy_assignable<M>::value,
+                "a model must be copyable: a squashed instruction is undone from a copy");
+
+ public:
+  M model;
+
+  Cycle issue(const Insn &insn, Id id, Cycle now) {
+    issued_.push_back({id, now, model});
+    return model.issue(insn, id, now);
+  }
+  void commit(const Insn &insn, Id id, Cycle now) {
+    model.commit(insn, id, now);
+    if (!issued_.empty()) issued_.pop_front();
+    while (!commits_.empty() && (issued_.empty() || commits_.front().cycle <= issued_.front().cycle))
+      commits_.pop_front();
+    if (!issued_.empty()) commits_.push_back({insn, id, now});
+  }
+  void squash(Id first, Cycle now) {
+    auto from = issued_.begin();
+    while (from != issued_.end() && from->id < first) ++from;
+    if (from == issued_.end()) return;
+    const Cycle issued = from->cycle;
+    model = std::move(from->before);
+    issued_.erase(from, issued_.end());
+    auto commit = commits_.begin();
+    while (commit != commits_.end() && commit->cycle <= issued) ++commit;
+    model.replaying_ = true;
+    for (Cycle cycle = issued + 1; cycle <= now; cycle++) {
+      model.tick(cycle);
+      for (; commit != commits_.end() && commit->cycle == cycle; ++commit)
+        model.commit(commit->insn, commit->id, cycle);
+    }
+    model.replaying_ = false;
+  }
+  void reset() {
+    issued_.clear();
+    commits_.clear();
+    model.reset();
+  }
+
+ private:
+  struct Issued {
+    Id id;
+    Cycle cycle;
+    M before;
+  };
+  struct Committed {
+    Insn insn;
+    Id id;
+    Cycle cycle;
+  };
+  std::deque<Issued> issued_;      // not committed, oldest first
+  std::deque<Committed> commits_;  // since the oldest of issued_
 };
 
 // The table of model M. No exception from M crosses the C boundary.
@@ -143,9 +202,9 @@ __attribute__((visibility("hidden"))) const vcix_model *export_model() {
       description.encodings.size(),
       [](const vcix_config *c, char *error, size_t error_size) -> void * {
         try {
-          std::unique_ptr<M> m(new M);
-          m->configure(Config(c));
-          return m.release();
+          std::unique_ptr<Instance<M>> instance(new Instance<M>);
+          instance->model.configure(Config(c));
+          return instance.release();
         } catch (const std::exception &e) {
           std::snprintf(error, error_size, "%s", e.what());
         } catch (...) {
@@ -153,16 +212,20 @@ __attribute__((visibility("hidden"))) const vcix_model *export_model() {
         }
         return nullptr;
       },
-      [](void *s) { delete static_cast<M *>(s); },
-      [](void *s, const vcix_host *h, const vcix_insn *i) { static_cast<M *>(s)->execute(Host(h), *i); },
-      [](void *s, const vcix_insn *i, Cycle n, const vcix_pending *p, size_t c) -> int {
-        return static_cast<M *>(s)->can_accept(*i, n, Pending(p, c));
+      [](void *s) { delete static_cast<Instance<M> *>(s); },
+      [](void *s, const vcix_host *h, const vcix_insn *i) {
+        static_cast<Instance<M> *>(s)->model.execute(Host(h), *i);
       },
-      [](void *s, const vcix_insn *i, Cycle n, const vcix_pending *p, size_t c) -> Cycle {
-        return static_cast<M *>(s)->latency(*i, n, Pending(p, c));
+      [](void *s, const vcix_insn *i, Cycle n) -> int {
+        return static_cast<const Instance<M> *>(s)->model.can_accept(*i, n);
       },
-      [](void *s, const vcix_insn *i, Cycle n) { static_cast<M *>(s)->commit(*i, n); },
-      [](void *s) { static_cast<M *>(s)->reset(); },
+      [](void *s, const vcix_insn *i, Id id, Cycle n) -> Cycle {
+        return static_cast<Instance<M> *>(s)->issue(*i, id, n);
+      },
+      [](void *s, Id first, Cycle n) { static_cast<Instance<M> *>(s)->squash(first, n); },
+      [](void *s, const vcix_insn *i, Id id, Cycle n) { static_cast<Instance<M> *>(s)->commit(*i, id, n); },
+      [](void *s, Cycle n) { static_cast<Instance<M> *>(s)->model.tick(n); },
+      [](void *s) { static_cast<Instance<M> *>(s)->reset(); },
   };
   return &table;
 }

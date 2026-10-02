@@ -15,15 +15,15 @@ class Refuses : public Model {
 
   void configure(const Config &) override { throw std::runtime_error("this machine has no such unit"); }
   void execute(const Host &, const Insn &) override { report("execute"); }
-  bool can_accept(const Insn &, Cycle, const Pending &) const override {
+  bool can_accept(const Insn &, Cycle) const override {
     report("accept");
     return true;
   }
-  Cycle latency(const Insn &, Cycle, const Pending &) const override {
+  Cycle issue(const Insn &, Id, Cycle) override {
     report("issue");
     return 1;
   }
-  void commit(const Insn &, Cycle) override { report("commit"); }
+  void commit(const Insn &, Id, Cycle) override { report("commit"); }
   void reset() override { report("reset"); }
 
  private:
