@@ -1,5 +1,4 @@
-# Four commands back to back and a wait; then two more at the end of a fetch line, so the core runs out of
-# instructions while they are worked on, and a wait.
+# Four commands back to back and a wait; then two more at the end of a fetch line, so the core runs out of instructions while they are worked on, and a wait.
     .option norvc
     .text
     .globl main

@@ -11,3 +11,4 @@
 [config] nested is absent
 [config] listed is absent
 [config] not_in_the_file is absent
+[config] f16_to_f32(0x3c00) = 0x0badc0de

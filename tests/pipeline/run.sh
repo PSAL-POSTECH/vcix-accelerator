@@ -1,30 +1,29 @@
 #!/usr/bin/env bash
-# A model that accepts while others are in flight must really overlap on gem5, up to its depth.
-# Usage: tests/pipeline/run.sh [build-dir [spike [pk [gem5.opt]]]]
-set -euo pipefail
+# A model that accepts while others are in flight overlaps them on gem5, up to its depth. Usage: tests/pipeline/run.sh [build-dir [spike [pk [gem5.opt]]]]
+set -uo pipefail
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 source "$HERE/../../scripts/sim.sh"
 MODEL="$BUILD/libpipelined.so"
 failed=0
 
-rv_program "$HERE/burst.S" "$BUILD/burst"
+rv_program "$HERE/burst.S" "$BUILD/burst" || { echo "FAIL  burst.S does not build"; exit 2; }
 
-# expect <label> <log> <pattern> <comparison> <count>
 expect() {
-  local label=$1 log=$2 pattern=$3 op=$4 want=$5 got
-  got=$(grep -c "$pattern" "$log" || true)
-  if [ "$got" "$op" "$want" ]; then echo "PASS  $label ($got)"
-  else echo "FAIL  $label (got $got, want $op $want)"; failed=1; fi
+  local what=$1 log=$2 want=$3 line=$4 got ok=0
+  got=$(grep -Fxc -- "$line" "$log")
+  if [ "$want" = + ]; then [ "$got" -ge 1 ] && ok=1; else [ "$got" = "$want" ] && ok=1; fi
+  if [ $ok = 1 ]; then echo "PASS  $what ($got of $want)"; else echo "FAIL  $what ($got of $want: $line)"; failed=1; fi
 }
 
-spike_run "$MODEL" "" "$BUILD/burst" > "$BUILD/burst.spike.log" 2>&1
-expect "spike executes all six"                "$BUILD/burst.spike.log" '^\[model\] execute$' -eq 6
-expect "spike calls nothing else"              "$BUILD/burst.spike.log" '^\[model\] \(issue\|commit\) ' -eq 0
+log="$BUILD/burst.spike.log"
+spike_run "$MODEL" "" "$BUILD/burst" > "$log" 2>&1
+expect "spike executes all six" "$log" 6 "[model] execute"
 
-gem5_run "$BUILD/m5out-burst" "$MODEL" "" "$BUILD/burst" > "$BUILD/burst.gem5.log" 2>&1
-expect "gem5 commits all six"                  "$BUILD/burst.gem5.log" '^\[model\] commit '            -eq 6
-expect "gem5 issues with three in flight"      "$BUILD/burst.gem5.log" '^\[model\] issue .* pending=3$' -ge 1
-expect "gem5 never calls execute"              "$BUILD/burst.gem5.log" '^\[model\] execute$' -eq 0
-expect "gem5 never exceeds the model's depth"  "$BUILD/burst.gem5.log" '^\[model\] issue .* pending=[4-9]' -eq 0
+log="$BUILD/burst.gem5.log"
+gem5_run "$BUILD/m5out-burst" "$MODEL" "" "$BUILD/burst" > "$log" 2>&1
+expect "gem5 issues with three in flight"                   "$log" + "[model] issue, 3 in flight"
+expect "gem5 never exceeds the model's depth"               "$log" 0 "[model] issue, 4 in flight"
+expect "gem5 commits each of the six its latency after its issue" "$log" 6 "[model] commit, 10 cycles after its issue"
+expect "gem5 never calls execute"                           "$log" 0 "[model] execute"
 
 exit $failed

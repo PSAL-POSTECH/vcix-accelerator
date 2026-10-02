@@ -1,5 +1,4 @@
-# A load, then a pop and a read of what the pop writes: the load waits for memory at the head of the
-# queue longer than the pop's result takes, and by then nothing else in the core moves.
+# A load, a pop and a use of what the pop writes: the load waits for memory at the head of the queue longer than the pop takes, and nothing else in the core moves.
     .option norvc
     .text
     .globl main

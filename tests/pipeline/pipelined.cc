@@ -1,6 +1,7 @@
-// Test model: holds up to DEPTH instructions at once, and reports how many were in flight at every issue.
+// Test model: holds up to DEPTH instructions at once; reports how many were in flight at each issue, and at each commit the cycles since its issue.
 #include <cinttypes>
 #include <cstdio>
+#include <deque>
 
 #include "vcix_accel.hpp"
 
@@ -20,22 +21,23 @@ class Pipelined : public Model {
     printf("[model] execute\n");
     fflush(stdout);
   }
-  bool can_accept(const Insn &, Cycle) const override { return in_flight_ < DEPTH; }
+  bool can_accept(const Insn &, Cycle) const override { return issued_.size() < DEPTH; }
   Cycle issue(const Insn &, Id, Cycle now) override {
-    printf("[model] issue cycle=%" PRIu64 " pending=%zu\n", now, in_flight_);
+    printf("[model] issue, %zu in flight\n", issued_.size());
     fflush(stdout);
-    in_flight_++;
+    issued_.push_back(now);
     return LATENCY;
   }
   void commit(const Insn &, Id, Cycle now) override {
-    in_flight_--;
+    const Cycle issued = issued_.front();
+    issued_.pop_front();
     if (replaying()) return;
-    printf("[model] commit cycle=%" PRIu64 "\n", now);
+    printf("[model] commit, %" PRIu64 " cycles after its issue\n", now - issued);
     fflush(stdout);
   }
 
  private:
-  size_t in_flight_ = 0;
+  std::deque<Cycle> issued_;
 };
 
 }  // namespace

@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# Runs every test, on both simulators: each tests/*/run.sh, in order.
-# Usage: tests/run.sh [build-dir [spike [pk [gem5.opt]]]]
+# Runs every test, on both simulators: each tests/*/run.sh, in order. Usage: tests/run.sh [build-dir [spike [pk [gem5.opt]]]]
 set -uo pipefail
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 source "$HERE/../scripts/sim.sh"
