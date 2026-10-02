@@ -31,13 +31,25 @@
 .endr
 
 # The systolic array: a push of the source, and a pop into the destination, which keeps what the pop leaves.
+# a3 = what an element of 8 bits is, the number that rides the instruction in its rs1 field: 0 to 3.
 .macro systolic_push name, sew, p
     .globl \name
 \name:
     vsetvli t0, a2, e\sew, m2, ta, ma
     vle\sew\().v v8, (a0)
-    sf.vc.iv \p, 0x0, v8, 0
-    mv      a0, t0
+    la      t1, 1f
+    slli    t3, a3, 3
+    add     t1, t1, t3
+    jr      t1
+1:  sf.vc.iv \p, 0x0, v8, 0
+    j       2f
+    sf.vc.iv \p, 0x0, v8, 1
+    j       2f
+    sf.vc.iv \p, 0x0, v8, 2
+    j       2f
+    sf.vc.iv \p, 0x0, v8, 3
+    j       2f
+2:  mv      a0, t0
     ret
 .endm
 .macro systolic_pop name, sew
@@ -45,8 +57,19 @@
 \name:
     vsetvli t0, a2, e\sew, m2, ta, ma
     vle\sew\().v v16, (a1)
-    sf.vc.v.i 0x2, 0x0, v16, 0
-    vse\sew\().v v16, (a1)
+    la      t1, 1f
+    slli    t3, a3, 3
+    add     t1, t1, t3
+    jr      t1
+1:  sf.vc.v.i 0x2, 0x0, v16, 0
+    j       2f
+    sf.vc.v.i 0x2, 0x0, v16, 1
+    j       2f
+    sf.vc.v.i 0x2, 0x0, v16, 2
+    j       2f
+    sf.vc.v.i 0x2, 0x0, v16, 3
+    j       2f
+2:  vse\sew\().v v16, (a1)
     mv      a0, t0
     ret
 .endm
@@ -61,25 +84,44 @@ k_compute:
     ret
 
 # The cross-lane unit. A group holds 64 elements at every width, so a pattern of 64 words fits its own group.
-# \simm is the operation as the five signed bits of the field.
-.macro cross_push name, sew, lmul, simm
+# a3 = the operation, 0 to 23: the field of the push. a4 = the pattern of a push that carries one, a word per element.
+.macro cross_operations form, operand
+1:
+  .irp operation, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15
+    \form 0x3, \operand, v8, \operation
+    j       2f
+  .endr
+  .irp operation, 16, 17, 18, 19, 20, 21, 22, 23
+    \form 0x3, \operand, v8, \operation-32
+    j       2f
+  .endr
+2:
+.endm
+.macro cross_push name, sew, lmul
     .globl \name
 \name:
     vsetvli t0, a2, e\sew, \lmul, ta, ma
     vle\sew\().v v8, (a0)
-    sf.vc.iv 0x3, 0, v8, \simm
+    la      t1, 1f
+    slli    t3, a3, 3
+    add     t1, t1, t3
+    jr      t1
+    cross_operations sf.vc.iv, 0
     mv      a0, t0
     ret
 .endm
-# a3 = the pattern, a word per element.
-.macro cross_push_pattern name, sew, lmul, simm
+.macro cross_push_pattern name, sew, lmul
     .globl \name
 \name:
     vsetvli t0, a2, e32, m8, ta, ma
-    vle32.v v24, (a3)
+    vle32.v v24, (a4)
     vsetvli t0, a2, e\sew, \lmul, ta, ma
     vle\sew\().v v8, (a0)
-    sf.vc.ivv 0x3, v24, v8, \simm
+    la      t1, 1f
+    slli    t3, a3, 3
+    add     t1, t1, t3
+    jr      t1
+    cross_operations sf.vc.ivv, v24
     mv      a0, t0
     ret
 .endm
@@ -96,24 +138,20 @@ k_compute:
     cross_pop k_cross_pop_8, 8, m2
     cross_pop k_cross_pop_16, 16, m4
     cross_pop k_cross_pop_32, 32, m8
-# Not an operation: the unit is not entered without crossing or shuffling.
-    cross_push k_cross_push_0_32, 32, m8, 0
-.irp operation, 1, 2, 4, 5, 6, 8, 9, 10, 12, 13, 14
-    cross_push k_cross_push_\operation\()_8, 8, m2, \operation
-    cross_push k_cross_push_\operation\()_16, 16, m4, \operation
-    cross_push k_cross_push_\operation\()_32, 32, m8, \operation
-    cross_push_pattern k_cross_pattern_\operation\()_8, 8, m2, \operation
-    cross_push_pattern k_cross_pattern_\operation\()_16, 16, m4, \operation
-    cross_push_pattern k_cross_pattern_\operation\()_32, 32, m8, \operation
-.endr
-.irp operation, 16, 17, 18, 20, 21, 22
-    cross_push k_cross_push_\operation\()_8, 8, m2, \operation-32
-    cross_push k_cross_push_\operation\()_16, 16, m4, \operation-32
-    cross_push k_cross_push_\operation\()_32, 32, m8, \operation-32
-    cross_push_pattern k_cross_pattern_\operation\()_8, 8, m2, \operation-32
-    cross_push_pattern k_cross_pattern_\operation\()_16, 16, m4, \operation-32
-    cross_push_pattern k_cross_pattern_\operation\()_32, 32, m8, \operation-32
-.endr
+    cross_push k_cross_push_8, 8, m2
+    cross_push k_cross_push_16, 16, m4
+    cross_push k_cross_push_32, 32, m8
+    cross_push_pattern k_cross_pattern_8, 8, m2
+    cross_push_pattern k_cross_pattern_16, 16, m4
+    cross_push_pattern k_cross_pattern_32, 32, m8
+# The pattern of the shuffle after the crossing: a push whose field says 24, of words whatever the tile's width.
+    .globl k_cross_load
+k_cross_load:
+    vsetvli t0, a2, e32, m8, ta, ma
+    vle32.v v8, (a0)
+    sf.vc.iv 0x3, 0, v8, -8
+    mv      a0, t0
+    ret
 
 # vlane_idx at an element width: a1 receives a3 doublewords of the group it wrote into, which was 0.
 .macro lane_index name, sew
