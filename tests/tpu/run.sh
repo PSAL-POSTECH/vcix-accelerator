@@ -28,7 +28,7 @@ times() { grep -Fxc "[tpu] $2" "$BUILD/tpu-$1.gem5.log"; }
 
 lines() { grep -c "^\[tpu\] $2 " "$BUILD/tpu-$1.gem5.log"; }
 
-for program in sfu one_cycle systolic_stream systolic_full xlu; do
+for program in sfu one_cycle systolic_stream systolic_full msa xlu; do
   rv_program "$HERE/$program.S" "$BUILD/tpu-$program" || { echo "FAIL  $program.S does not build"; exit 2; }
 done
 printf 'tpu_trace: 1\ntpu_sfu_latency_cycles: 4\n' > "$BUILD/tpu-latency-4.yml"
@@ -87,6 +87,15 @@ full=$(said systolic_full \
   "issue systolic weight push: 1 cycles after the last issue, 0 in flight, input queue 0, output queue 5")
 report "lines $full of $(lines systolic_full issue)" "lines 3 of 11" \
   "with the output queue full the array stops, and moves again in the cycle after a pop"
+
+echo "-- multi-precision array, 4 lanes: 7 slots, queues of 8"
+on_gem5 msa msa "$HERE/systolic.yml"
+
+delay=$(said msa "issue msa push: the first, input queue 0, output queue 0" \
+  "issue msa push: 1 cycles after the last issue, 0 in flight, input queue 0, output queue 0" \
+  "issue msa pop: 11 cycles after the last issue, 0 in flight, input queue 0, output queue 4")
+report "exit ${rc[msa]}, lines $delay of $(lines msa issue)" "exit 0, lines 3 of 3" \
+  "a weight push enters nothing, and a pop of four is issued 4 + 7 cycles after the input push of four"
 
 echo "-- cross-lane unit: a delay line of 3 slots, queues of 8"
 on_gem5 xlu xlu "$HERE/xlu.yml"

@@ -18,6 +18,7 @@
 #include "vcix_accel.hpp"
 
 #include "misc.hpp"
+#include "msa.hpp"
 #include "sfu.hpp"
 #include "systolic.hpp"
 #include "xlu.hpp"
@@ -223,7 +224,7 @@ class Functional {
       for (const std::pair<const char *, Handler> &one : named) {
         const size_t before = made.size();
         for (const std::vector<Encoding> &unit :
-             {Sfu::encodings(), Misc::encodings(), Systolic::encodings(), Xlu::encodings()})
+             {Sfu::encodings(), Misc::encodings(), Systolic::encodings(), Xlu::encodings(), Msa::encodings()})
           for (const Encoding &e : unit)
             if (std::string(one.first) == e.name) made.push_back({e.match, e.mask, one.second});
         if (made.size() != before + 1)

@@ -1,7 +1,7 @@
 # tpu
 
 A TPU's units on the two custom opcodes: one model (`libtpu.so`, name `tpu`).
-The timing face is four unit classes; each lists its own encodings, `tpu.cc`
+The timing face is five unit classes; each lists its own encodings, `tpu.cc`
 owns all of them and hands each call to the unit that owns the instruction.
 The functional face is `functional.hpp`: what each instruction does to the
 registers and to memory, which `execute` hands every instruction to.
@@ -11,9 +11,10 @@ registers and to memory, which `execute` hands every instruction to.
 | Unit | File | Instructions | Timing |
 |---|---|---|---|
 | `tpu::Sfu` | `sfu.hpp` | `verf`, `vtanh`, `vsin`, `vcos`, `vlog`, `vatan`, `vexp` (`sf.vc.v.iv`, custom-2) | a pipeline: one instruction enters per cycle, the result is ready `tpu_sfu_latency_cycles` after it entered, and any number are inside at once |
-| `tpu::Misc` | `misc.hpp` | `vlane_idx`, `compute`, and until it has a unit of its own the multi-precision array's `msa push` (`sf.vc.iv` 2) and `msa pop` (`sf.vc.v.i` 3) (custom-2); the DMA's `dma_config_desc`, `mvin`, `mvin2`, `mvin3`, `mvout` (custom-1) | one cycle each, any number in a cycle |
+| `tpu::Misc` | `misc.hpp` | `vlane_idx`, `compute` (custom-2); the DMA's `dma_config_desc`, `mvin`, `mvin2`, `mvin3`, `mvout` (custom-1) | one cycle each, any number in a cycle |
 | `tpu::Systolic` | `systolic.hpp` | the systolic array's input push (`sf.vc.iv` 0), weight push (`sf.vc.iv` 1) and pop (`sf.vc.v.i` 2) (custom-2) | one instruction per cycle. A push of `vl` elements waits for room in the input queue; one element a cycle enters a delay line of 2 x `vpu_num_lanes` - 1 slots and comes out into the output queue; a pop of `vl` waits until the output queue holds `vl`. A weight push changes nothing. The array stops while the output queue is full |
 | `tpu::Xlu` | `xlu.hpp` | the cross-lane unit's `xlu_push` (`sf.vc.iv` 3), `xlu_push_pattern` (`sf.vc.ivv` 3) and `xlu_pop` (`sf.vc.v.i` 1) (custom-2) | one instruction per cycle, one cycle each. A push of `vl` elements, of either kind, waits for room in the input queue; one element a cycle enters a delay line of `tpu_xlu_latency_cycles` slots and comes out into the output queue; a pop of `vl` waits until the output queue holds `vl`. The unit stops while the output queue is full |
+| `tpu::Msa` | `msa.hpp` | the multi-precision array's `msa push` (`sf.vc.iv` 2) and `msa pop` (`sf.vc.v.i` 3) (custom-2) | the systolic array's, with queues and a delay line of its own, from the same two keys. One push serves both operands: with [4] of its field at 19:15 set it is a weight push and changes nothing, otherwise an input push of `vl` elements. The delay line is 2 x `vpu_num_lanes` - 1 slots whatever the field's active-width shift ([3:2]) and format ([1:0]) are |
 
 The systolic array's `compute` has no timing effect and is owned by
 `tpu::Misc`. The DMA has no model of its own either: `tpu::Misc` owns its
@@ -24,13 +25,15 @@ a different length: `tpu::Stream` (`stream.hpp`) is the two queues and the
 delay line, and each unit has one. The cross-lane unit's timing knows no tile:
 a pop takes whatever the output queue holds, and the field at 19:15 is not
 read. Its latency is not known: the 10 of `tpu_xlu_latency_cycles` is a
-placeholder.
+placeholder. The multi-precision array is a third `tpu::Stream`, as long as
+the systolic array's. That an array working on a reduced width takes the full
+delay is a decision, not a measurement: no hardware says what it takes.
 
 A unit is a plain copyable class with the methods of the timing face
 (`owns`, `configure`, `can_accept`, `issue`, `commit`, `tick`) and a static
 `encodings()`, the named encodings `owns` is answered from. `tpu::Sfu`,
-`tpu::Systolic` and `tpu::Xlu` change state at `issue`; the array and the
-cross-lane unit also move in `tick`.
+`tpu::Systolic`, `tpu::Xlu` and `tpu::Msa` change state at `issue`; the two
+arrays and the cross-lane unit also move in `tick`.
 
 ## The functional face
 
@@ -79,8 +82,8 @@ argument it also runs it and compares the outputs byte by byte.
 |---|---|---|
 | `tpu_sfu_latency_cycles` | 10 | cycles from the issue of a special function to its result; at least 1 |
 | `tpu_trace` | 0 | not 0: the model prints a line at every issue and every commit |
-| `vpu_num_lanes` | 128 | width and height of the systolic array; 1 to 2^20 |
-| `tpu_systolic_queue_entries` | 256 | entries in the array's input queue and in its output queue; at least 1 |
+| `vpu_num_lanes` | 128 | width and height of the systolic array and of the multi-precision array; 1 to 2^20 |
+| `tpu_systolic_queue_entries` | 256 | entries in the input queue and in the output queue of each of the two arrays; at least 1 |
 | `tpu_xlu_latency_cycles` | 10 | slots in the cross-lane unit's delay line, one cycle each; at least 1. A placeholder: the unit's latency is not known |
 | `tpu_xlu_queue_entries` | 256 | entries in the cross-lane unit's input queue and in its output queue; at least 1 |
 | `vpu_spad_size_kb_per_lane` | none | the scratchpad of one lane, which the DMA lays a tensor out over; a transfer without it ends the run |
@@ -98,10 +101,10 @@ With `tpu_trace` the model reports, on gem5:
 ```
 
 "In flight" counts the instructions issued and not committed. The issue of a
-systolic or cross-lane instruction also reports the entries it found in its
-unit's input queue and output queue. The reports do not change what the model
-answers. `tests/tpu/run.sh` checks the timing of the four units with them, all
-on `libtpu.so`.
+systolic, cross-lane or multi-precision instruction also reports the entries
+it found in its unit's input queue and output queue. The reports do not change
+what the model answers. `tests/tpu/run.sh` checks the timing of the five units
+with them, all on `libtpu.so`.
 
 ## The gem5 machine
 
