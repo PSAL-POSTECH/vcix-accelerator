@@ -32,7 +32,7 @@ the end of this page for what the other CPU models do.
    are given the unit's instructions in flight. When several units own an
    instruction, it goes to the first in the pool that accepts it. An
    instruction no model owns goes through unasked. A unit that already has
-   `vcixMaxInFlight` instructions in flight (a parameter of the unit, 64 by
+   `vcixMaxInFlight` instructions in flight (a parameter of the unit, 8192 by
    default, at least 1) is issued no more and its model is not asked: the
    in-order queue is sized to hold that many for each unit, and a model that
    accepts without limit would otherwise outgrow it.

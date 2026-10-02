@@ -255,7 +255,7 @@ report $ok "gem5 with vcixMaxInFlight 4 asks the model with at most three in fli
 log="$BUILD/in-flight-default.gem5.log"
 gem5_run "$BUILD/m5out-in-flight-default" "$BUILD/libalways_accepts.so" "" "$BUILD/forty" > "$log" 2>&1; rc=$?
 most=$(most "$log"); committed=$(grep -Fxc '[model] commit' "$log"); overflowed=$(grep -c 'No space to push data into queue' "$log")
-ok=0; [ "$rc" = 0 ] && [ "${most:-0}" -gt 3 ] && [ "$most" -lt 64 ] && [ "$committed" = 40 ] && [ "$overflowed" = 0 ] && ok=1
+ok=0; [ "$rc" = 0 ] && [ "${most:-0}" -gt 3 ] && [ "$committed" = 40 ] && [ "$overflowed" = 0 ] && ok=1
 report $ok "gem5 with the default bound lets the model go past four, and its in-order queue holds them (exit $rc, most ${most:-none}, committed $committed, queue warnings $overflowed)"
 
 echo "-- processor state"
