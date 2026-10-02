@@ -85,3 +85,69 @@ systolic instruction also reports the entries it found in the array's input
 queue and output queue. The reports do not change what the model answers.
 `tests/tpu/run.sh` checks the timing of the three units with them, all on
 `libtpu.so`.
+
+## The gem5 machine
+
+`gem5/` is the machine these units sit in: the CPU and memory configuration
+PyTorchSim measures its cycle binaries on, moved here from
+`gem5_script/vpu_config.py` (the functional unit pool and the CPU `RiscvVPU`)
+and `gem5_script/script_systolic.py` (the syscall-emulation script) of
+`PSAL-POSTECH/PyTorchSim` 4b2555a, and ported to the gem5 of branch `vcix`.
+The CPU's widths and limits, the pool's unit counts and latencies, the clock
+domains, the instruction cache, the bus and the memory are the original's.
+
+```
+gem5.opt -d m5out examples/tpu/gem5/script_systolic.py -c <binary> --model libtpu.so \
+    [--machine-config machine.yml] [--vlane N] [--vlen N]
+```
+
+| Option | Meaning |
+|---|---|
+| `-c`, `--cmd` | the program; `-o`, `--options` its arguments |
+| `--model` | the model library, `libtpu.so`; required |
+| `--machine-config` | the machine description (the PyTorchSim config file, as for Spike): every key of it goes to the model, read as `examples/gem5_se.py` reads it |
+| `--vlane` | `vpu_num_lanes` for the model. Given, it replaces the key of the machine description; not given, the description's value holds, and without either the model's default, 128 |
+| `--vlen` | VLEN of the CPU, 256 by default; the description's `vpu_vector_length_bits` is not read |
+| `--cpu`, `--mem`, `--sparse` | accepted as before; `--cpu` is `RiscvVPU` by default, the other two were and are read by nothing |
+
+PyTorchSim reads `system.cpu.numCycles` of every statistics dump in
+`m5out/stats.txt` but the last.
+
+What the port changed:
+
+1. **The accelerator units are one `MinorVcixAccelFU`.** `SystolicArray`
+   (`CustomMatMul*`) and `SpecialFunctionUnit` (`CustomV*`, 10 cycles) are
+   gone, and `CustomVlaneIdx` left `MinorVecMisc`: this gem5 has none of those
+   op classes, and the one unit, in the place `SystolicArray` had in the pool,
+   hands their instructions to the model. So do the cross-lane units the fork
+   `student-Jungmin/PyTorchSim` (`develop-npu`, 84fec6e) has in this pool
+   (`TransposeUnit`, `CrossbarUnit` and their pops, or `CrossLaneUnit`): what a
+   cross-lane instruction costs is the model's to say. `SparseAccelerator`,
+   which no pool used, is gone with its op classes.
+2. **The model is configured from the machine description**, by `--model`,
+   `--machine-config` and `--vlane` above, in place of
+   `SystolicArray.systolicArrayWidth` and `systolicArrayHeight`.
+3. **Op classes gem5 25.1 added have a unit of their kind:**
+
+   | Unit | Added |
+   |---|---|
+   | `MinorFPUnit` | `Bf16Cvt` |
+   | `MinorVecAdder` | `SimdBf16Add`, `SimdBf16Cmp` |
+   | `MinorVecMultiplier` | `SimdDotProd`, `SimdBf16Mult`, `SimdBf16MultAcc`, `SimdBf16MatMultAcc`, `SimdBf16DotProd` |
+   | `MinorVecMisc` | `SimdBf16Cvt` |
+   | `MinorVecLdStore` | `SimdUnitStrideSegmentedFaultOnlyFirstLoad`, `SimdStrideSegmentedLoad`, `SimdStrideSegmentedStore` |
+   | `MinorCustomMiscFU` | `System`, which gem5's `MinorDefaultMiscFU` now lists where it listed `IprAccess` |
+
+   Not placed: `SimdSha3`, `SimdSm4e` and `SimdCrc`. The pool has no unit of
+   their kind: the original gives none to `SimdAes`, `SimdAesMix`, the six
+   `SimdSha*` classes before them, or to `Matrix`, `MatrixMov` and `MatrixOP`,
+   and that is kept. gem5 warns of each of the fourteen when the CPU is built;
+   no RISC-V instruction of this gem5 has one of them.
+4. **What this gem5 does not take as written:** `vpu_config` is imported from
+   beside the script, not from `$TORCHSIM_DIR/gem5_script`, and the parameters
+   `unitType`, `systolicArrayWidth` and `systolicArrayHeight` of a unit do not
+   exist. Everything else is accepted unchanged, `SpmXBar` included. The
+   branch predictor is gem5's default, as before; that default is now a
+   `BranchPredictor` around the same `TournamentBP`.
+
+`tests/tpu/run.sh` runs `sfu.S` on this machine as well.
