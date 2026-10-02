@@ -28,7 +28,7 @@ verdict() {
   missed=()
 }
 
-for name in unowned pair forty queue speculated waited asleep vstart status; do
+for name in unowned pair forty queue speculated waited asleep vstart frm status; do
   options=(); [ $name = status ] && options=(-nostdlib -Wl,-N,-Ttext=0x80000000,--no-warn-rwx-segments)
   rv_program "$HERE/$name.S" "$BUILD/$name" "${options[@]}" || { echo "FAIL  $name.S does not build"; exit 2; }
 done
@@ -112,7 +112,7 @@ for sim in spike gem5; do
 done
 run spike other_abi other_abi "" pair
 ended 1
-part 1 "libother_abi.so has ABI 10, Spike has 9"
+part 1 "libother_abi.so has ABI 11, Spike has 10"
 verdict "spike refuses a table of another ABI version"
 run spike cannot_be_made cannot_be_made "" pair
 ended 1
@@ -196,6 +196,11 @@ echo "-- processor state"
 run spike vstart print_args "" vstart
 ended 0
 verdict "spike: vstart reads 0 after a model's instruction that began with vstart 3"
+
+run spike frm reports "" frm
+ended 0
+line 1 "[host] frm 2"
+verdict "spike: a model reads a CSR through the host, as the program left it"
 
 log="$BUILD/status.gem5.log"
 gem5_bare_run "$BUILD/m5out-status" "$BUILD/libprint_args.so" "$BUILD/status" > "$log" 2>&1; rc=$?

@@ -34,7 +34,11 @@ class Reports : public Model {
     base_ = config.hex("base", 0x1000);
   }
 
-  void execute(const Host &, const Insn &insn) override { report("execute", insn); }
+  void execute(const Host &host, const Insn &insn) override {
+    report("execute", insn);
+    printf("[host] frm %" PRIu64 "\n", host.csr(0x002));
+    fflush(stdout);
+  }
   bool can_accept(const Insn &insn, Cycle) const override {
     report("accept", insn);
     return in_flight_ < depth_;
