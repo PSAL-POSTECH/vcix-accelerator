@@ -5,12 +5,6 @@
 #     ./setup/image.sh exists            exit 0 if the registry already has it
 #     ./setup/image.sh build [-j N]      build it locally
 #     ./setup/image.sh build --push      build it and publish it
-#
-# The tag is the git tree hash of setup/: the pin file, the Dockerfile and the
-# scripts the Dockerfile runs are the whole build context, so the tag changes
-# exactly when the image would, and a checkout always names the image it needs.
-# CI builds only when `exists` says no. Uncommitted changes under setup/ give a
-# -dirty tag, which is never pushed.
 set -euo pipefail
 shopt -s inherit_errexit
 

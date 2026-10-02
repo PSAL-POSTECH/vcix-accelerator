@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Configure and build this repository against the Spike the setup produced.
 # Usage: scripts/build.sh [-j N] [build-dir]      (default: <repo>/build)
-# SPIKE_ROOT / SPIKE_BUILD override which Spike tree the adapter is built against.
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

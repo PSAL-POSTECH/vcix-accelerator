@@ -1,6 +1,5 @@
-# Test fixture: a bare-metal RISC-V machine in M mode, gem5's default MinorCPU pool plus
-# one accelerator unit. Usage: gem5.opt gem5_bare.py --model M.so ELF
-# Exits 0 when the program ends with m5_exit, and with the code of its m5_fail otherwise.
+# Test fixture: a bare-metal RISC-V machine in M mode, with one accelerator unit.
+# Usage: gem5.opt gem5_bare.py --model M.so ELF
 import argparse
 import sys
 

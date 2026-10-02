@@ -1,5 +1,4 @@
-// Makes instances of one model library the way the adapters do and checks that they share
-// no state, and that a model that cannot be configured says why instead of being made.
+// Checks that instances of one model library share no state, and that a refusal says why.
 // Usage: instances remembers.so refuses.so
 #include <dlfcn.h>
 

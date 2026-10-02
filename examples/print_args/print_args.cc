@@ -1,6 +1,5 @@
 // Example: a unit that only observes. Claims all of custom-2 and custom-1 and prints what
-// each face is given; computes nothing. It takes one instruction at a time, for a number
-// of cycles read from the machine description, and is busy for RECOVERY cycles after a commit.
+// each face is given; computes nothing.
 #include <algorithm>
 #include <cinttypes>
 #include <cstdio>
@@ -20,8 +19,6 @@ constexpr Cycle RECOVERY = 3;
 bool is_custom_1(const Insn &insn) { return (insn.bits & MASK_OPCODE) == MATCH_CUSTOM_1; }
 
 // Which fields of a custom-2 instruction are registers, by the VCIX operand rules.
-// funct6[5:2]: 0000 no vs2, 0010 vs2, 1010 and 1111 (widening) vd is read too. vm == 0:
-// vd is written. funct3 is what the rs1 field is: 0 vector, 3 immediate, 4 integer, 5 float.
 struct VcixOperands {
   explicit VcixOperands(const Insn &insn)
       : shape(insn.bits >> 28), vd_written(((insn.bits >> 25) & 1) == 0), rs1_kind(funct3(insn)) {}
@@ -45,8 +42,7 @@ void print_fields(const char *who, const Insn &insn) {
   printf(" | vl=%u sew=%u lmul=2^%d", insn.vl, insn.sew_bits, insn.lmul_log2);
 }
 
-// The first elements of a vector register in lane 0, as stored: at most two, and
-// no more than vl.
+// The first elements of a vector register in lane 0, as stored: at most two.
 void print_vreg(const Host &host, const Insn &insn, uint32_t reg) {
   const uint32_t bytes = insn.sew_bits / 8;
   const uint32_t count = std::min<uint32_t>(insn.vl, 2);
@@ -93,8 +89,7 @@ class PrintArgs : public Model {
   bool can_accept(const Insn &, Cycle now, const Pending &pending) const override {
     return pending.empty() && now >= busy_until_;
   }
-  // The configured cycles, once per register of the operand group when the
-  // instruction has a vector operand: LMUL scales nothing else.
+  // The configured cycles, once per register of the operand group of a vector operand.
   Cycle latency(const Insn &insn, Cycle now, const Pending &) const override {
     const bool vector = !is_custom_1(insn) && VcixOperands(insn).any_vector();
     Cycle cycles = latency_ * (vector ? group_size(insn) : 1);

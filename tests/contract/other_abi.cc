@@ -1,5 +1,4 @@
-// Test model: a table of another ABI version. Nothing but the version is
-// filled in, so a caller that reads past it calls a null pointer.
+// Test model: a table of another ABI version, with nothing else filled in.
 #include "vcix_accel.h"
 
 extern "C" __attribute__((visibility("default"))) const vcix_model *vcix_accel_model(void) {

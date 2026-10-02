@@ -1,5 +1,4 @@
 # Two owned instructions back to back: the second is issued while the first is in flight.
-# The nops keep them clear of the refetch that follows vsetvli.
     .text
     .globl main
 main:

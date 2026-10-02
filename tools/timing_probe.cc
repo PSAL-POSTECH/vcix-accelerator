@@ -1,5 +1,4 @@
-// Drives the timing face of one instance without gem5: N copies of one instruction, one at
-// a time. Each is issued when the model accepts it and committed latency cycles later.
+// Drives the timing face of one instance without gem5: N copies of one instruction, one at a time.
 #include <dlfcn.h>
 
 #include <charconv>

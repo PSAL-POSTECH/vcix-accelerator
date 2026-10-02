@@ -1,6 +1,5 @@
-# Seven sf.vc.* forms (x, i, vv, v.vv, v.xv, v.fv, v.ivv), v.vv again under LMUL=2, and
-# one custom-1 instruction; not the widening forms, the vd-less three-operand forms or
-# fractional LMUL. Needs a model that owns custom-2 and custom-1; the program checks nothing.
+# Seven sf.vc.* forms, v.vv again under LMUL=2, and one custom-1 instruction.
+# Needs a model that owns custom-2 and custom-1; the program checks nothing.
     .text
     .globl main
 main:

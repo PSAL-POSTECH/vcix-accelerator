@@ -1,5 +1,4 @@
-// Test model: a pipelined unit. It holds up to DEPTH instructions at once and each
-// takes LATENCY cycles; it reports how many were in flight at every issue.
+// Test model: holds up to DEPTH instructions at once, and reports how many were in flight at every issue.
 #include <cinttypes>
 #include <cstdio>
 

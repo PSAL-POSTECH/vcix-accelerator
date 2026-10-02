@@ -1,7 +1,5 @@
 #!/usr/bin/env bash
-# The print_args example on both simulators: each of the program's 9 accelerator
-# instructions reaches the model once (gem5 may issue a squashed one again), with
-# the operands its encoding names and a latency that follows LMUL only for vectors.
+# The print_args example on both simulators: each instruction reaches the model once, with its operands.
 # Usage: tests/print_args/run.sh [build-dir [spike [pk [gem5.opt]]]]
 set -uo pipefail
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)

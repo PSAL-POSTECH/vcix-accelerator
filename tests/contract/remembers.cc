@@ -1,5 +1,4 @@
 // Test model: an instance remembers how many commits it has seen, and its latency says so.
-// It takes one instruction at a time and reports each configure, issue and commit.
 #include <cinttypes>
 #include <cstdio>
 

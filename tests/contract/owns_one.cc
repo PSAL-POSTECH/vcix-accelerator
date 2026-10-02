@@ -1,5 +1,4 @@
-// Test model: owns exactly one encoding (sf.vc.x with funct6 = 1) and reports
-// every call, on either face, with the entry point it came through.
+// Test model: owns exactly one encoding (sf.vc.x with funct6 = 1) and reports every call.
 #include <cinttypes>
 #include <cstdio>
 
