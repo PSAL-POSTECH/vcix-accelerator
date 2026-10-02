@@ -2,7 +2,7 @@
 
 The Spike side lives in the Spike repository, not here: branch `vcix` of
 `PSAL-POSTECH/riscv-isa-sim`, on top of the fork whose vector unit has lanes
-(`9f555b4`). `setup/versions.env` pins the commit. It carries no accelerator:
+(`9f555b4`), with that fork's 8-bit floats (`Zvfp8`). `setup/versions.env` pins the commit. It carries no accelerator:
 the units that fork had built in (the DMA, the systolic array, the special
 functions, `vlane_idx`, the cross-lane unit) are removed, and what they did is
 a model's business.
@@ -32,10 +32,12 @@ spike --extlib=<model.so> --isa=rv64gcv_zfh_xvcixaccel --machine-config=<machine
    and a form that reads `f[rs1]` needs the floating-point unit on; otherwise
    the instruction is illegal and the model is not called. The model is given
    the instruction's bits, `vl`, SEW and LMUL, and a host that reads and
-   writes x registers, reads f registers, reaches a vector register of a lane
-   and reads and writes memory through the MMU, the scratchpad included.
-   Asking for a vector register to write marks the vector state dirty. A lane
-   or a register that does not exist ends the run. After `execute`, `vstart`
+   writes x registers, reads f registers and CSRs, reaches a vector register
+   of a lane and reads and writes memory through the MMU, the scratchpad
+   included. A CSR is read as the hart holds it, with no check of the
+   privilege mode.
+   Asking for a vector register to write marks the vector state dirty. A lane,
+   a register or a CSR that does not exist ends the run. After `execute`, `vstart`
    is 0: a model never handles it.
 5. **The machine description** — `--machine-config` is read by Spike, with
    yaml-cpp, which is in its tree. Spike takes its own machine from it:

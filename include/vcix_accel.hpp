@@ -91,6 +91,7 @@ class Host {
   uint64_t xreg(uint32_t reg) const { return h_->xreg_read(h_->ctx, reg); }
   void set_xreg(uint32_t reg, uint64_t v) const { h_->xreg_write(h_->ctx, reg, v); }
   uint64_t freg_bits(uint32_t reg) const { return h_->freg_bits(h_->ctx, reg); }
+  uint64_t csr(uint32_t number) const { return h_->csr_read(h_->ctx, number); }
   void mem_read(uint64_t addr, void *dst, size_t n) const { h_->mem_read(h_->ctx, addr, dst, n); }
   void mem_write(uint64_t addr, const void *src, size_t n) const { h_->mem_write(h_->ctx, addr, src, n); }
 
