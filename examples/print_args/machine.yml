@@ -1,4 +1,5 @@
 # Stands in for the machine description a real setup already has.
 vpu_num_lanes: 4
+vpu_spad_size_kb_per_lane: 128
 vpu_vector_length_bits: 256
 print_args_latency_cycles: 7
