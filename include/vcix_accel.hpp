@@ -121,6 +121,8 @@ class Model {
   virtual bool can_accept(const Insn &insn, Cycle now, const Pending &pending) const = 0;
   virtual Cycle latency(const Insn &insn, Cycle now, const Pending &pending) const = 0;
   virtual void commit(const Insn &insn, Cycle now) = 0;
+  // Every cycle after a commit, before that cycle's other calls, for as long as it returns true.
+  virtual bool tick(Cycle) { return false; }
 
   virtual void reset() {}
 };
@@ -162,6 +164,7 @@ __attribute__((visibility("hidden"))) const vcix_model *export_model() {
         return static_cast<M *>(s)->latency(*i, n, Pending(p, c));
       },
       [](void *s, const vcix_insn *i, Cycle n) { static_cast<M *>(s)->commit(*i, n); },
+      [](void *s, Cycle n) -> int { return static_cast<M *>(s)->tick(n); },
       [](void *s) { static_cast<M *>(s)->reset(); },
   };
   return &table;

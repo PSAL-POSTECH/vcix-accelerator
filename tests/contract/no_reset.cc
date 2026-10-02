@@ -1,4 +1,4 @@
-// Test model: a table filled in by hand, with the one member that may be NULL left NULL.
+// Test model: a table filled in by hand, with the members that may be NULL left NULL.
 #include "vcix_accel.h"
 
 namespace {
@@ -18,6 +18,7 @@ const vcix_model table = {
     [](void *, const vcix_insn *, vcix_cycle_t, const vcix_pending *, size_t) -> int { return 1; },
     [](void *, const vcix_insn *, vcix_cycle_t, const vcix_pending *, size_t) -> vcix_cycle_t { return 2; },
     [](void *, const vcix_insn *, vcix_cycle_t) {},
+    nullptr,  // tick
     nullptr,  // reset
 };
 

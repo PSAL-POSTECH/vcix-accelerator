@@ -18,7 +18,7 @@ report() {
 program() {
   rv_program "$HERE/$1.S" "$BUILD/$1" "${@:2}" || { echo "FAIL  $1.S does not build"; exit 2; }
 }
-for name in owned unowned nothing segfault returns3 pair forty; do program $name; done
+for name in owned unowned nothing segfault returns3 pair forty queue; do program $name; done
 program status -nostdlib -Wl,-N,-Ttext=0x80000000,--no-warn-rwx-segments
 
 echo "-- ownership"
@@ -147,7 +147,8 @@ probe() {
 }
 
 probe "an owned instruction, three times"      0 3 "$OWNS_ONE" $OWNED_INSN 3
-probe "a table written by hand, reset NULL"     0 2 "$BUILD/libno_reset.so" $OWNED_INSN 2
+probe "a table written by hand, tick and reset NULL" 0 2 "$BUILD/libno_reset.so" $OWNED_INSN 2
+probe "a queue that only tick empties, four times" 0 4 "$BUILD/libqueued.so" $OWNED_INSN 4
 probe "an instruction the model does not own"  1 0 "$OWNS_ONE" $UNOWNED_INSN 3
 probe "a model of another ABI version"         1 0 "$BUILD/libother_abi.so" $OWNED_INSN 3
 probe "instruction 'zz' is refused"            2 0 "$OWNS_ONE" zz 3
@@ -169,7 +170,7 @@ for sim in spike gem5; do
   if [ $sim = spike ]; then spike_run "$BUILD/libno_reset.so" "" "$BUILD/owned" > "$log" 2>&1
   else gem5_run "$BUILD/m5out-no_reset" "$BUILD/libno_reset.so" "" "$BUILD/owned" > "$log" 2>&1; fi; rc=$?
   ok=0; [ "$rc" = 0 ] && ok=1
-  report $ok "$sim takes a table written by hand, reset NULL (exit $rc)"
+  report $ok "$sim takes a table written by hand, tick and reset NULL (exit $rc)"
 done
 
 # gem5 only: the Spike adapter does not check the table yet.
@@ -244,6 +245,35 @@ gem5_run "$BUILD/m5out-in-flight-default" "$BUILD/libalways_accepts.so" "" "$BUI
 most=$(most "$log"); committed=$(grep -Fxc '[model] commit' "$log"); overflowed=$(grep -c 'No space to push data into queue' "$log")
 ok=0; [ "$rc" = 0 ] && [ "${most:-0}" -gt 3 ] && [ "$committed" = 40 ] && [ "$overflowed" = 0 ] && ok=1
 report $ok "gem5 with the default bound lets the model go past four, and its in-order queue holds them (exit $rc, most ${most:-none}, committed $committed, queue warnings $overflowed)"
+
+echo "-- tick"
+QUEUED="$BUILD/libqueued.so"
+
+# queue.S: six commands of ten ticks each and two waits, each wait's commit followed by one tick.
+TICKS=62
+
+# said <log> <line>: queued's reports that are exactly <line>.
+said() { grep -Fxc "[model] $2" "$1"; }
+
+log="$BUILD/queue.gem5.log"
+gem5_run "$BUILD/m5out-queue" "$QUEUED" "" "$BUILD/queue" --max-ticks 100000000 > "$log" 2>&1; rc=$?
+third=$(said "$log" "issue command, 1 finished, the last 0 cycles ago")
+fourth=$(said "$log" "issue command, 2 finished, the last 0 cycles ago")
+ok=0; [ "$rc" = 0 ] && [ "$third" = 1 ] && [ "$fourth" = 1 ] && ok=1
+report $ok "gem5 issues a command a full queue held in the cycle whose tick finished one (exit $rc, third command $third of 1, fourth $fourth of 1)"
+
+held=$(said "$log" "issue wait, 4 finished, the last 0 cycles ago")
+ok=0; [ "$held" = 1 ] && ok=1
+report $ok "gem5 issues a wait in the cycle whose tick emptied the queue ($held of 1)"
+
+ticks=$(grep -c '^\[model\] tick' "$log"); consecutive=$(said "$log" "tick +1")
+ok=0; [ "$ticks" = $TICKS ] && [ "$consecutive" = $TICKS ] && ok=1
+report $ok "gem5 ticks an instance in every cycle it is busy and in no other (ticks $ticks of $TICKS, one cycle after the last tick or commit $consecutive)"
+
+spike_run "$QUEUED" "" "$BUILD/queue" > "$BUILD/queue.spike.log" 2>&1; rc=$?
+ticks=$(grep -c '^\[model\] tick' "$BUILD/queue.spike.log")
+ok=0; [ "$rc" = 0 ] && [ "$ticks" = 0 ] && ok=1
+report $ok "spike never calls tick (exit $rc, ticks $ticks)"
 
 echo "-- processor state"
 

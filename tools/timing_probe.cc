@@ -1,4 +1,5 @@
-// Drives the timing face of one instance without gem5: N copies of one instruction, one at a time.
+// Drives the timing face of one instance without gem5: N copies of one instruction, one at a time,
+// with tick in every cycle the instance is busy.
 #include <dlfcn.h>
 
 #include <charconv>
@@ -75,12 +76,18 @@ int main(int argc, char **argv) {
   const vcix_insn *insn = &decoded;
 
   vcix_cycle_t now = 0;
+  bool busy = false;
+  const auto advance = [&](vcix_cycle_t cycles) {
+    for (; cycles && busy; cycles--) busy = m->tick(self, ++now);
+    now += cycles;
+  };
   for (uint32_t i = 0; i < count; i++) {
-    while (!m->can_accept(self, insn, now, nullptr, 0)) now++;
+    while (!m->can_accept(self, insn, now, nullptr, 0)) advance(1);
     vcix_cycle_t lat = m->latency(self, insn, now, nullptr, 0);
     printf("insn %" PRIu32 ": issued at %" PRIu64 ", committed at %" PRIu64 "\n", i, now, now + lat);
-    now += lat;
+    advance(lat);
     m->commit(self, insn, now);
+    busy = m->tick != nullptr;
   }
   m->destroy(self);
   return 0;

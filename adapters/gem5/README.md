@@ -42,6 +42,13 @@ the end of this page for what the other CPU models do.
    helpers gem5's own instructions use: VS must be on and `vtype` legal, and FS
    must be on for a form that reads `f[rs1]`. Only if they raise no fault is
    the model's `commit` called. A form that writes `vd` leaves VS dirty.
+7. **Tick** — a unit is busy from its model's `commit` until its `tick`
+   returns zero; a table without `tick` is never busy. `Execute::evaluate`
+   begins by calling `tick` with the current cycle on each busy unit's model,
+   before that cycle's commit and issue. While a unit is busy, Execute keeps
+   the pipeline awake, so no cycle passes without its tick, and
+   `Execute::isDrained` is false, so a drain waits for the accelerator to
+   finish. A program that exits ends the simulation, busy unit or not.
 
 The model receives the instruction bits with `vl`, SEW and LMUL.
 
