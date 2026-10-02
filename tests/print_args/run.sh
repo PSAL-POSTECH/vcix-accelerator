@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
-# The print_args example on both simulators: each is configured from machine.yml,
-# and each of the program's 9 accelerator instructions reaches the model once --
-# `execute` on Spike, `commit` on gem5. gem5 may ask `latency` again for an
-# instruction it squashed, so `issue` is at least 9, not exactly 9.
+# The print_args example on both simulators: each of the program's 9 accelerator
+# instructions reaches the model once (gem5 may issue a squashed one again), with
+# the operands its encoding names and a latency that follows LMUL only for vectors.
 # Usage: tests/print_args/run.sh [build-dir [spike [pk [gem5.opt]]]]
 set -uo pipefail
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -33,6 +32,23 @@ report $ok "spike executes each instruction once ($executed of $INSNS)"
 issued=$(lines '^\[issue  \] '); committed=$(lines '^\[commit \] '); exited=$(lines '^exit: ')
 ok=0; [ "$issued" -ge $INSNS ] && [ "$committed" = $INSNS ] && [ "$exited" = 1 ] && ok=1
 report $ok "gem5 issues and commits each instruction (issue $issued, commit $committed of $INSNS, exit line $exited)"
+
+# sf.vc.x and sf.vc.i have no vector operand (the rs2 field is an immediate); sf.vc.vv reads two.
+no_vector=$(grep -E '^\[execute\] insn=(062541db|0e22b1db) ' "$LOG" | grep -Evc ' v[0-9]+\[')
+two_vectors=$(grep -Ec '^\[execute\] insn=2620825b .* v2\[0\.\.1\]=0x3f800000,0x40000000 v1\[0\.\.1\]=0x41200000,0x41300000$' "$LOG")
+ok=0; [ "$no_vector" = 2 ] && [ "$two_vectors" = 1 ] && ok=1
+report $ok "spike shows the registers the encoding names (no vector operand: $no_vector of 2; vs2 and vs1: $two_vectors of 1)"
+
+# latency_of <insn>: ready - cycle of the last `issue` line for the instruction.
+latency_of() {
+  sed -n "s/^\[issue  \] insn=$1 .* cycle=\([0-9]*\) ready=\([0-9]*\)\$/\1 \2/p" "$LOG" | tail -n 1 | {
+    read -r cycle ready && echo $((ready - cycle))
+  }
+}
+# machine.yml says 7 cycles; custom-1 has no vector operand, so m2 does not double it.
+m1=$(latency_of 2c2081db); m2=$(latency_of 2c23025b); custom1=$(latency_of 00b5002b)
+ok=0; [ "$m1" = 7 ] && [ "$m2" = 14 ] && [ "$custom1" = 7 ] && ok=1
+report $ok "gem5 latency follows LMUL only with a vector operand (m1 ${m1:-none}, m2 ${m2:-none}, custom-1 under m2 ${custom1:-none})"
 
 [ "$failed" = 0 ] || { echo "---- $LOG"; cat "$LOG"; }
 exit $failed
