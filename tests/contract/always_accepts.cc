@@ -1,4 +1,4 @@
-// Test model: accepts whatever is in flight, and reports what was in flight at each call.
+// Test model: accepts whatever it has in flight, and reports how many that was at each call.
 #include <cinttypes>
 #include <cstdio>
 
@@ -16,24 +16,28 @@ class AlwaysAccepts : public Model {
   std::vector<Encoding> owns() const override { return {{0x0600405B, 0xFE00707F, "owned"}}; }
 
   void execute(const Host &, const Insn &) override {}
-  bool can_accept(const Insn &, Cycle, const Pending &pending) const override {
-    report("accept", pending);
+  bool can_accept(const Insn &, Cycle) const override {
+    report("accept");
     return true;
   }
-  Cycle latency(const Insn &, Cycle, const Pending &pending) const override {
-    report("issue", pending);
+  Cycle issue(const Insn &, Id, Cycle) override {
+    report("issue");
+    in_flight_++;
     return LATENCY;
   }
-  void commit(const Insn &, Cycle) override {
+  void commit(const Insn &, Id, Cycle) override {
+    in_flight_--;
+    if (replaying()) return;
     printf("[model] commit\n");
     fflush(stdout);
   }
 
  private:
-  void report(const char *entry, const Pending &pending) const {
-    printf("[model] %s pending=%zu\n", entry, pending.size());
+  void report(const char *entry) const {
+    printf("[model] %s pending=%zu\n", entry, in_flight_);
     fflush(stdout);
   }
+  size_t in_flight_ = 0;
 };
 
 }  // namespace

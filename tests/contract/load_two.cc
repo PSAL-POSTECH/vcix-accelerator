@@ -52,7 +52,7 @@ int main(int argc, char **argv) {
   expect(strcmp(first->name, "first") == 0 && strcmp(second->name, "second") == 0, "each table carries its own name");
   expect(first->encodings != second->encodings && first->encodings[0].match != second->encodings[0].match,
          "each table carries its own encodings");
-  expect(first->latency(one, &insn, 0, nullptr, 0) == 1 && second->latency(two, &insn, 0, nullptr, 0) == 2,
+  expect(first->issue(one, &insn, 1, 0) == 1 && second->issue(two, &insn, 1, 0) == 2,
          "each table calls its own model");
   return failed;
 }

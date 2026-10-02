@@ -86,28 +86,33 @@ class PrintArgs : public Model {
     fflush(stdout);
   }
 
-  bool can_accept(const Insn &, Cycle now, const Pending &pending) const override {
-    return pending.empty() && now >= busy_until_;
-  }
+  bool can_accept(const Insn &, Cycle now) const override { return !in_flight_ && now >= busy_until_; }
   // The configured cycles, once per register of the operand group of a vector operand.
-  Cycle latency(const Insn &insn, Cycle now, const Pending &) const override {
+  Cycle issue(const Insn &insn, Id, Cycle now) override {
     const bool vector = !is_custom_1(insn) && VcixOperands(insn).any_vector();
     Cycle cycles = latency_ * (vector ? group_size(insn) : 1);
     print_fields("issue  ", insn);
     printf(" | cycle=%" PRIu64 " ready=%" PRIu64 "\n", now, now + cycles);
     fflush(stdout);
+    in_flight_ = true;
     return cycles;
   }
-  void commit(const Insn &insn, Cycle now) override {
+  void commit(const Insn &insn, Id, Cycle now) override {
+    in_flight_ = false;
+    busy_until_ = now + RECOVERY;
+    if (replaying()) return;
     print_fields("commit ", insn);
     printf(" | cycle=%" PRIu64 "\n", now);
     fflush(stdout);
-    busy_until_ = now + RECOVERY;
   }
-  void reset() override { busy_until_ = 0; }
+  void reset() override {
+    in_flight_ = false;
+    busy_until_ = 0;
+  }
 
  private:
   Cycle latency_ = 5;
+  bool in_flight_ = false;
   Cycle busy_until_ = 0;
 };
 

@@ -26,22 +26,39 @@ the end of this page for what the other CPU models do.
    fatal too, with the model's name and its reason.
 5. **Issue** — `Execute::issue` asks the unit's model `can_accept`, in the same
    chain of conditions that keeps any instruction from issuing; a refusal
-   leaves it waiting. An accepted instruction is asked its `latency` and then
-   occupies no functional unit: it waits in the in-order queue until
-   `issue cycle + latency`, as gem5's own unit-less instructions do. Both calls
-   are given the unit's instructions in flight. When several units own an
-   instruction, it goes to the first in the pool that accepts it. An
-   instruction no model owns goes through unasked. A unit that already has
-   `vcixMaxInFlight` instructions in flight (a parameter of the unit, 8192 by
-   default, at least 1) is issued no more and its model is not asked: the
-   in-order queue is sized to hold that many for each unit, and a model that
-   accepts without limit would otherwise outgrow it.
+   leaves it waiting. An accepted instruction is told to the model with
+   `issue`, under an id that rises with every one, and then occupies no
+   functional unit: it waits in the in-order queue until
+   `issue cycle + the latency issue returned`, as gem5's own unit-less
+   instructions do. When several units own an instruction, it goes to the
+   first in the pool that accepts it. An instruction no model owns goes
+   through untold. A unit that already has `vcixMaxInFlight` instructions in
+   the in-order queue (a parameter of the unit, 8192 by default, at least 1)
+   is issued no more and its model is not asked: the queue is sized to hold
+   that many for each unit, and a model that accepts without limit would
+   otherwise outgrow it.
 6. **Commit** — in order, and not before that cycle. An instruction the model
    does not own becomes an illegal instruction here, on the same path as any
    other. Otherwise the instruction's own checks run first, through the
    helpers gem5's own instructions use: VS must be on and `vtype` legal, and FS
    must be on for a form that reads `f[rs1]`. Only if they raise no fault is
    the model's `commit` called. A form that writes `vd` leaves VS dirty.
+7. **Squash** — each unit keeps the list of instructions its model was told
+   were issued and has not been told were committed. The model is told
+   `squash`, with the oldest id of the list, and the list is emptied, in three
+   places: where Execute moves to a new stream (a mispredicted branch, an
+   interrupt, a fault; every instruction still in flight is then on the old
+   stream and will be discarded), where an instruction of the list faults at
+   commit, and, as a net under those two, where an instruction still on the
+   list leaves the in-order queue uncommitted. An instruction leaves the
+   in-order queue at its head, so a squash always takes the whole list. That
+   holds for one thread only: a CPU of more than one thread with an
+   accelerator unit is refused.
+8. **Tick** — `Execute::evaluate` begins by calling `tick` with the current
+   cycle on every unit's model whose table has one, before that cycle's commit
+   and issue, and ends by keeping the pipeline awake, so no cycle the CPU runs
+   passes without it. A drain does not wait for a model. A program that exits
+   ends the simulation.
 
 The model receives the instruction bits with `vl`, SEW and LMUL.
 

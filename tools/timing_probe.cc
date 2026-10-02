@@ -1,4 +1,5 @@
-// Drives the timing face of one instance without gem5: N copies of one instruction, one at a time.
+// Drives the timing face of one instance without gem5: N copies of one instruction, one at a time,
+// with tick in every cycle.
 #include <dlfcn.h>
 
 #include <charconv>
@@ -54,7 +55,7 @@ int main(int argc, char **argv) {
     fprintf(stderr, "%s has ABI %u, the probe has %u\n", argv[1], m->abi_version, VCIX_ACCEL_ABI_VERSION);
     return 1;
   }
-  if (!m->create || !m->destroy || !m->can_accept || !m->latency || !m->commit) {
+  if (!m->create || !m->destroy || !m->can_accept || !m->issue || !m->squash || !m->commit) {
     fprintf(stderr, "%s leaves create, destroy or part of the timing face NULL\n", argv[1]);
     return 1;
   }
@@ -75,12 +76,18 @@ int main(int argc, char **argv) {
   const vcix_insn *insn = &decoded;
 
   vcix_cycle_t now = 0;
+  const auto advance = [&](vcix_cycle_t cycles) {
+    for (; cycles; cycles--) {
+      now++;
+      if (m->tick) m->tick(self, now);
+    }
+  };
   for (uint32_t i = 0; i < count; i++) {
-    while (!m->can_accept(self, insn, now, nullptr, 0)) now++;
-    vcix_cycle_t lat = m->latency(self, insn, now, nullptr, 0);
+    while (!m->can_accept(self, insn, now)) advance(1);
+    vcix_cycle_t lat = m->issue(self, insn, i + 1, now);
     printf("insn %" PRIu32 ": issued at %" PRIu64 ", committed at %" PRIu64 "\n", i, now, now + lat);
-    now += lat;
-    m->commit(self, insn, now);
+    advance(lat);
+    m->commit(self, insn, i + 1, now);
   }
   m->destroy(self);
   return 0;

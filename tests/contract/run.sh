@@ -18,7 +18,7 @@ report() {
 program() {
   rv_program "$HERE/$1.S" "$BUILD/$1" "${@:2}" || { echo "FAIL  $1.S does not build"; exit 2; }
 }
-for name in owned unowned nothing segfault returns3 pair forty; do program $name; done
+for name in owned unowned nothing segfault returns3 pair forty queue speculated; do program $name; done
 program status -nostdlib -Wl,-N,-Ttext=0x80000000,--no-warn-rwx-segments
 
 echo "-- ownership"
@@ -147,7 +147,8 @@ probe() {
 }
 
 probe "an owned instruction, three times"      0 3 "$OWNS_ONE" $OWNED_INSN 3
-probe "a table written by hand, reset NULL"     0 2 "$BUILD/libno_reset.so" $OWNED_INSN 2
+probe "a table written by hand, tick and reset NULL" 0 2 "$BUILD/libno_reset.so" $OWNED_INSN 2
+probe "a queue that only tick empties, four times" 0 4 "$BUILD/libqueued.so" $OWNED_INSN 4
 probe "an instruction the model does not own"  1 0 "$OWNS_ONE" $UNOWNED_INSN 3
 probe "a model of another ABI version"         1 0 "$BUILD/libother_abi.so" $OWNED_INSN 3
 probe "instruction 'zz' is refused"            2 0 "$OWNS_ONE" zz 3
@@ -169,7 +170,7 @@ for sim in spike gem5; do
   if [ $sim = spike ]; then spike_run "$BUILD/libno_reset.so" "" "$BUILD/owned" > "$log" 2>&1
   else gem5_run "$BUILD/m5out-no_reset" "$BUILD/libno_reset.so" "" "$BUILD/owned" > "$log" 2>&1; fi; rc=$?
   ok=0; [ "$rc" = 0 ] && ok=1
-  report $ok "$sim takes a table written by hand, reset NULL (exit $rc)"
+  report $ok "$sim takes a table written by hand, tick and reset NULL (exit $rc)"
 done
 
 # gem5 only: the Spike adapter does not check the table yet.
@@ -244,6 +245,45 @@ gem5_run "$BUILD/m5out-in-flight-default" "$BUILD/libalways_accepts.so" "" "$BUI
 most=$(most "$log"); committed=$(grep -Fxc '[model] commit' "$log"); overflowed=$(grep -c 'No space to push data into queue' "$log")
 ok=0; [ "$rc" = 0 ] && [ "${most:-0}" -gt 3 ] && [ "$committed" = 40 ] && [ "$overflowed" = 0 ] && ok=1
 report $ok "gem5 with the default bound lets the model go past four, and its in-order queue holds them (exit $rc, most ${most:-none}, committed $committed, queue warnings $overflowed)"
+
+echo "-- tick"
+QUEUED="$BUILD/libqueued.so"
+
+# said <log> <line>: a model's reports that are exactly <line>.
+said() { grep -Fxc "[model] $2" "$1"; }
+
+# queue.S: six commands of ten ticks each and two waits; the second pair arrives after the core has gone idle.
+log="$BUILD/queue.gem5.log"
+gem5_run "$BUILD/m5out-queue" "$QUEUED" "" "$BUILD/queue" --max-ticks 100000000 > "$log" 2>&1; rc=$?
+third=$(said "$log" "issue command, 1 finished, the last 0 cycles ago, 0 cycles without a tick")
+fourth=$(said "$log" "issue command, 2 finished, the last 0 cycles ago, 0 cycles without a tick")
+ok=0; [ "$rc" = 0 ] && [ "$third" = 1 ] && [ "$fourth" = 1 ] && ok=1
+report $ok "gem5 issues a command a full queue held in the cycle whose tick finished one (exit $rc, third command $third of 1, fourth $fourth of 1)"
+
+held=$(said "$log" "issue wait, 4 finished, the last 0 cycles ago, 0 cycles without a tick")
+ok=0; [ "$held" = 1 ] && ok=1
+report $ok "gem5 issues a wait in the cycle whose tick emptied the queue ($held of 1)"
+
+issues=$(grep -c '^\[model\] issue ' "$log"); unbroken=$(grep -c '^\[model\] issue .*, 0 cycles without a tick$' "$log")
+ok=0; [ "$issues" -ge 8 ] && [ "$unbroken" = "$issues" ] && ok=1
+report $ok "gem5 ticks an instance in every cycle, the core idle or not (issues $issues, with no cycle missed before them $unbroken)"
+
+spike_run "$QUEUED" "" "$BUILD/queue" > "$BUILD/queue.spike.log" 2>&1; rc=$?
+calls=$(grep -c '^\[model\]' "$BUILD/queue.spike.log")
+ok=0; [ "$rc" = 0 ] && [ "$calls" = 0 ] && ok=1
+report $ok "spike calls nothing of the timing face (exit $rc, calls $calls)"
+
+echo "-- squash"
+
+# speculated.S: the state each issue reports is what it would be had the wrong-path instructions never been issued.
+log="$BUILD/speculated.gem5.log"
+gem5_run "$BUILD/m5out-speculated" "$BUILD/libspeculates.so" "" "$BUILD/speculated" > "$log" 2>&1; rc=$?
+first=$(said "$log" "issue: 0 issued, 0 committed, 0 ticks missing")
+wrong=$(said "$log" "issue: 1 issued, 0 committed, 0 ticks missing")
+right=$(said "$log" "issue: 1 issued, 1 committed, 0 ticks missing")
+issues=$(grep -c '^\[model\] issue: ' "$log")
+ok=0; [ "$rc" = 0 ] && [ "$first" = 1 ] && [ "$wrong" = 1 ] && [ "$right" = 1 ] && [ "$issues" -ge 3 ] && ok=1
+report $ok "gem5 takes back what it issued on a wrong path: the issue, and the ticks and the commit since (exit $rc, first $first of 1, wrong path $wrong of 1, right path $right of 1, issues $issues)"
 
 echo "-- processor state"
 

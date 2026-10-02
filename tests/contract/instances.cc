@@ -34,8 +34,21 @@ void expect(bool ok, const char *what) {
 const vcix_config no_config = {nullptr, [](void *, const char *) -> const char * { return nullptr; }};
 const vcix_insn insn = {0x062541db, 8, 32, 0};
 
-// What remembers answers: its latency is 10 plus the commits the instance has seen.
-vcix_cycle_t commits_seen(const vcix_model *m, void *self) { return m->latency(self, &insn, 0, nullptr, 0) - 10; }
+vcix_id_t next_id = 1;
+
+// What remembers answers to an issue, taken back at once: 10 plus the commits the instance has seen.
+vcix_cycle_t commits_seen(const vcix_model *m, void *self) {
+  const vcix_id_t id = next_id++;
+  const vcix_cycle_t answer = m->issue(self, &insn, id, 0);
+  m->squash(self, id, 0);
+  return answer - 10;
+}
+
+void issue_and_commit(const vcix_model *m, void *self, vcix_cycle_t now) {
+  const vcix_id_t id = next_id++;
+  m->issue(self, &insn, id, now);
+  m->commit(self, &insn, id, now);
+}
 
 }  // namespace
 
@@ -57,12 +70,12 @@ int main(int argc, char **argv) {
   }
   expect(one != two, "one library makes two instances");
 
-  remembers->commit(one, &insn, 5);
+  issue_and_commit(remembers, one, 5);
   expect(commits_seen(remembers, one) == 1 && commits_seen(remembers, two) == 0,
          "a commit on one instance does not change what the other answers");
 
-  remembers->commit(two, &insn, 6);
-  remembers->commit(two, &insn, 7);
+  issue_and_commit(remembers, two, 6);
+  issue_and_commit(remembers, two, 7);
   remembers->destroy(one);
   one = remembers->create(&no_config, error, sizeof error);
   expect(one && commits_seen(remembers, one) == 0 && commits_seen(remembers, two) == 2,

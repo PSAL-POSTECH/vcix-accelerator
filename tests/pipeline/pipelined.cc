@@ -20,16 +20,22 @@ class Pipelined : public Model {
     printf("[model] execute\n");
     fflush(stdout);
   }
-  bool can_accept(const Insn &, Cycle, const Pending &pending) const override { return pending.size() < DEPTH; }
-  Cycle latency(const Insn &, Cycle now, const Pending &pending) const override {
-    printf("[model] issue cycle=%" PRIu64 " pending=%zu\n", now, pending.size());
+  bool can_accept(const Insn &, Cycle) const override { return in_flight_ < DEPTH; }
+  Cycle issue(const Insn &, Id, Cycle now) override {
+    printf("[model] issue cycle=%" PRIu64 " pending=%zu\n", now, in_flight_);
     fflush(stdout);
+    in_flight_++;
     return LATENCY;
   }
-  void commit(const Insn &, Cycle now) override {
+  void commit(const Insn &, Id, Cycle now) override {
+    in_flight_--;
+    if (replaying()) return;
     printf("[model] commit cycle=%" PRIu64 "\n", now);
     fflush(stdout);
   }
+
+ private:
+  size_t in_flight_ = 0;
 };
 
 }  // namespace
