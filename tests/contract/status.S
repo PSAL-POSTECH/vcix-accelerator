@@ -1,6 +1,5 @@
-# Bare metal, in M mode: what mstatus does to a custom-2 instruction and what the
-# instruction does to mstatus. Ends with m5_exit, or with m5_fail and one bit per
-# failed check: 1 VS not dirty after vd is written, 2 f[rs1] read with FS off, 4 any other trap.
+# Bare metal, in M mode. Ends with m5_exit, or with m5_fail and one bit per failed check:
+# 1 VS not dirty after vd is written, 2 f[rs1] read with FS off, 4 any other trap.
     .text
     .globl _start
 _start:

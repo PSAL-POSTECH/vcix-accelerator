@@ -1,5 +1,4 @@
-// Test model: owns nothing and reports, for each key below, the value it is configured
-// with or that the key is absent; then `count` read as a decimal number and `base` as hex.
+// Test model: owns nothing and reports each key's value, then `count` as decimal and `base` as hex.
 #include <cinttypes>
 #include <cstdio>
 

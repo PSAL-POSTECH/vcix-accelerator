@@ -38,7 +38,6 @@ done
 log() { printf '\n\033[1m==> %s\033[0m\n' "$*"; }
 want() { for s in "${STEPS[@]}"; do [ "$s" = "$1" ] && return 0; done; return 1; }
 
-# Fetch exactly one commit: the history is never looked at, and gem5's is large.
 fetch_commit() {
   local dir="$1" repo="$2" sha="$3"
   mkdir -p "$dir"
@@ -46,8 +45,6 @@ fetch_commit() {
     git -C "$dir" init -q
     git -C "$dir" remote add origin "$repo"
   fi
-  # Every time: a tree cloned before a pin changed repository would otherwise
-  # keep fetching from the old one.
   git -C "$dir" remote set-url origin "$repo"
   if [ "$(git -C "$dir" rev-parse -q --verify HEAD 2>/dev/null || true)" != "$sha" ]; then
     git -C "$dir" fetch -q --depth 1 origin "$sha"
@@ -56,9 +53,6 @@ fetch_commit() {
   echo "  $dir @ $(git -C "$dir" rev-parse HEAD)"
 }
 
-# ----------------------------------------------------------------- toolchain --
-# Downloaded, not built. The stamp is the checksum of the archive it came from,
-# so a moved pin replaces the tree instead of unpacking over it.
 if want toolchain; then
   log "RISC-V toolchain"
   STAMP="$TOOLCHAIN_ROOT/.vcix-toolchain"
@@ -70,8 +64,6 @@ if want toolchain; then
     curl -fSL --retry 3 -o "$TMP/toolchain.tar.gz" "$TOOLCHAIN_URL"
     echo "$TOOLCHAIN_SHA256  $TMP/toolchain.tar.gz" | sha256sum -c -
     rm -rf "$TOOLCHAIN_ROOT"; mkdir -p "$TOOLCHAIN_ROOT"
-    # --no-same-owner: as root, tar would restore the archive's owners, and a
-    # container with a single mapped uid cannot.
     tar -xzf "$TMP/toolchain.tar.gz" -C "$TOOLCHAIN_ROOT" --strip-components=1 --no-same-owner
     rm -rf "$TMP"; trap - EXIT
     echo "$TOOLCHAIN_SHA256" > "$STAMP"
@@ -80,7 +72,6 @@ if want toolchain; then
   "$TOOLCHAIN_ROOT/bin/riscv64-unknown-elf-gcc" --version | head -1
 fi
 
-# ------------------------------------------------------------------------ pk --
 if want pk; then
   log "riscv-pk"
   fetch_commit "$PK_ROOT" "$PK_REPO" "$PK_SHA"
@@ -93,9 +84,6 @@ if want pk; then
   echo "  $PK_BIN"
 fi
 
-# --------------------------------------------------------------------- spike --
-# The source tree and build/ stay: the adapter compiles against the first and
-# takes config.h and libriscv.a from the second.
 if want spike; then
   log "spike"
   fetch_commit "$SPIKE_ROOT" "$SPIKE_REPO" "$SPIKE_SHA"
@@ -108,9 +96,6 @@ if want spike; then
   echo "  $SPIKE_BIN"
 fi
 
-# ---------------------------------------------------------------------- gem5 --
-# The stamp names what the binary was built from; scons takes a minute or two
-# to find out it has nothing to do, and this skips that. Delete it to force.
 if want gem5; then
   log "gem5 @ $GEM5_BRANCH"
   fetch_commit "$GEM5_ROOT" "$GEM5_REPO" "$GEM5_SHA"
@@ -129,7 +114,6 @@ if want gem5; then
   echo "  $GEM5_BIN"
 fi
 
-# ---------------------------------------------------------------------- repo --
 if want repo; then
   log "vcix-accelerator"
   "$REPO/scripts/build.sh" -j "$JOBS"

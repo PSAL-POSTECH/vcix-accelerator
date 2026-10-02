@@ -1,5 +1,4 @@
-// Test model: a table filled in by hand, as a model not written against the C++
-// wrapper would be, with the one member that may be NULL left NULL. It keeps no state.
+// Test model: a table filled in by hand, with the one member that may be NULL left NULL.
 #include "vcix_accel.h"
 
 namespace {

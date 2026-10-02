@@ -41,8 +41,7 @@ inline uint32_t funct3(const Insn &insn) { return (insn.bits >> 12) & 0x7; }
 // Registers in one vector operand's group.
 inline uint32_t group_size(const Insn &insn) { return insn.lmul_log2 > 0 ? 1u << insn.lmul_log2 : 1u; }
 
-// A value of the machine description the model cannot use. Thrown from
-// configure, it stops the run: the simulator reports the message.
+// Thrown from configure, it stops the run with this message.
 class ConfigError : public std::runtime_error {
  public:
   ConfigError(const std::string &key, const std::string &value, const std::string &why)
@@ -55,7 +54,6 @@ class Config {
   // The value as written, or nullptr when the key is absent. Valid until configure returns.
   const char *get(const std::string &key) const { return c_->get(c_->ctx, key.c_str()); }
   // The value as an unsigned decimal number; `fallback` only for an absent key.
-  // Text that is not such a number throws ConfigError.
   uint64_t uint(const std::string &key, uint64_t fallback) const {
     const char *value = get(key);
     if (!value) return fallback;
@@ -70,7 +68,6 @@ class Config {
     return number;
   }
   // The value as a hexadecimal number written 0x...; `fallback` only for an absent key.
-  // Text that is not such a number throws ConfigError.
   uint64_t hex(const std::string &key, uint64_t fallback) const {
     const char *value = get(key);
     if (!value) return fallback;
@@ -111,9 +108,7 @@ class Host {
   const vcix_host *h_;
 };
 
-// One object per instance: a hart on Spike, an accelerator unit on gem5. name() and owns()
-// are asked once, of an object made for that and then destroyed, so they cannot depend on
-// the machine description and the strings they return must not be that object's.
+// name() and owns() are asked of a throwaway object: they cannot depend on configure or return its strings.
 class Model {
  public:
   virtual ~Model() = default;
@@ -130,8 +125,7 @@ class Model {
   virtual void reset() {}
 };
 
-// The table of model M, this library's alone. create makes an M and configures it; an
-// exception from either becomes the error message, so none crosses the C boundary.
+// The table of model M. No exception from M crosses the C boundary.
 template <class M>
 __attribute__((visibility("hidden"))) const vcix_model *export_model() {
   struct Description {
@@ -173,8 +167,7 @@ __attribute__((visibility("hidden"))) const vcix_model *export_model() {
   return &table;
 }
 
-// export_model, or NULL with the reason on stderr when M cannot be made to be asked its
-// name and encodings: an exception from M's constructor does not cross the C boundary.
+// export_model, or NULL with the reason on stderr when M's constructor throws.
 template <class M>
 __attribute__((visibility("hidden"))) const vcix_model *export_model_or_null() {
   try {

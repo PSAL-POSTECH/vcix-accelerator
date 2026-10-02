@@ -1,5 +1,4 @@
 # Six instructions the pipelined model owns, back to back: more than its depth of four.
-# The nops keep them clear of the refetch that follows vsetvli.
     .text
     .globl main
 main:

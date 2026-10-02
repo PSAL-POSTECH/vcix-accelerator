@@ -1,5 +1,4 @@
-# Test fixture for the example and the tests, not a machine description: gem5's default
-# MinorCPU pool plus the accelerator units. Exits with the program's exit code, or 1.
+# Test fixture for the example and the tests: gem5's default MinorCPU pool plus the accelerator units.
 # Usage: gem5.opt gem5_se.py --model M.so [--config machine.yml] [--units N] [--max-in-flight N] [...] BINARY
 import argparse
 import sys
@@ -25,7 +24,6 @@ YAML_NULL = "tag:yaml.org,2002:null"
 
 
 # The machine description as vcix_config in include/vcix_accel.h defines it.
-# Composed, not loaded: values keep their text, and null is the resolver's decision.
 def machine_description(path):
     with open(path) as f:
         root = next(yaml.compose_all(f, Loader=yaml.SafeLoader), None)

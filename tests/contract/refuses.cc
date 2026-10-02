@@ -1,5 +1,4 @@
-// Test model: cannot be configured, and says why with an exception that is not a
-// ConfigError. Every face reports its call; none may ever be reached.
+// Test model: cannot be configured, and says why. Every face reports its call; none may be reached.
 #include <cstdio>
 #include <stdexcept>
 

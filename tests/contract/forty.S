@@ -1,5 +1,4 @@
-# Forty owned instructions back to back: more than the in-order queue of gem5's default
-# pool holds. The nops keep them clear of the refetch that follows vsetvli.
+# Forty owned instructions back to back, clear of the refetch that follows vsetvli.
     .text
     .globl main
 main:

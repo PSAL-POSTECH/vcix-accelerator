@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
-# The rules of the interface, one section each: ownership, the machine description, the model
-# table, instances, instructions in flight, processor state, and the harness the tests stand on.
+# The rules of the interface, one section each.
 # Usage: tests/contract/run.sh [build-dir [spike [pk [gem5.opt]]]]
 set -uo pipefail
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -28,8 +27,6 @@ echo "-- ownership"
 calls() { grep -Fxc "[model] $2 $OWNED_INSN" "$1"; }
 
 # owned_once <simulator> <program> <exit-code> <want-ok: 0|1>
-# Spike: one execute. gem5: one commit, accept and issue at least once (a squashed
-# instruction is asked again). Any other call the model reports fails the check.
 owned_once() {
   local sim=$1 prog=$2 rc=$3 want_ok=$4
   local log="$BUILD/$prog.$sim.log" ok=1 ended seen other
@@ -95,8 +92,7 @@ configured=$(grep -c '^\[config\]' "$BUILD/config-not_a_mapping.gem5.log")
 ok=0; [ "$rc" = 1 ] && [ "$configured" = 0 ] && ok=1
 report $ok "gem5 refuses not_a_mapping.yml (exit $rc, model configured with $configured values)"
 
-# refusal <simulator> <model.so> <model name> <reason>: the line the simulator stops with
-# when create fails; the reason may be only its beginning.
+# refusal <simulator> <model.so> <model name> <reason>: the line the simulator stops with.
 refusal() {
   if [ "$1" = spike ]; then echo "vcixaccel: $3: $4"; else echo "fatal: $2: $3: $4"; fi
 }
@@ -116,9 +112,7 @@ number() {
   fi
 }
 
-# key|value as written|what it is read as, nothing when the run must stop. count is decimal:
-# fallback 5; not a number, negative, trailing text, leading zero, too large. base is hex:
-# fallback 0x1000; no 0x, no digits, not hex digits, a capital X, too large.
+# key|value as written|what it is read as, nothing when the run must stop.
 NUMBERS=('count|8|8' 'count|~|5' 'count|abc|' 'count|-1|' 'count|8 cycles|' 'count|010|' 'count|18446744073709551616|'
          'base|0x80001000|0x80001000' 'base|0xffffffffffffffff|0xffffffffffffffff' 'base|~|0x1000' 'base|80001000|'
          'base|0x|' 'base|0x80zz|' 'base|0X80|' 'base|0x10000000000000000|')
@@ -160,8 +154,7 @@ probe "instruction 'zz' is refused"            2 0 "$OWNS_ONE" zz 3
 probe "count 'abc' is refused"                 2 0 "$OWNS_ONE" $OWNED_INSN abc
 probe "lmul-log2 '40' is refused"              2 0 "$OWNS_ONE" $OWNED_INSN 3 40
 
-# A model built hidden, as CMake builds one, calls its own f16_to_f32 and not the
-# simulator's, and its allocations survive the simulator's allocator.
+# A model built hidden calls its own f16_to_f32 and not the simulator's.
 for sim in spike gem5; do
   log="$BUILD/own_symbols.$sim.log"
   if [ $sim = spike ]; then spike_run "$BUILD/libown_symbols.so" "" "$BUILD/owned" > "$log" 2>&1
@@ -171,7 +164,6 @@ for sim in spike gem5; do
   report $ok "$sim: a model's own definition is the one it calls (exit $rc, own $own of 1, allocated $allocated times)"
 done
 
-# A table written by hand, with reset left NULL, runs on both.
 for sim in spike gem5; do
   log="$BUILD/no_reset.$sim.log"
   if [ $sim = spike ]; then spike_run "$BUILD/libno_reset.so" "" "$BUILD/owned" > "$log" 2>&1
@@ -186,7 +178,6 @@ said=$(grep -c 'fatal: .*libnull_table.so: vcix_accel_model() returned no table$
 ok=0; [ "$rc" = 1 ] && [ "$said" = 1 ] && ok=1
 report $ok "gem5 refuses a library that hands over no table (exit $rc, said so $said of 1)"
 
-# A model whose constructor throws hands over no table and says why; nothing is terminated.
 gem5_run "$BUILD/m5out-cannot_be_made" "$BUILD/libcannot_be_made.so" "" "$BUILD/owned" > "$BUILD/cannot_be_made.gem5.log" 2>&1; rc=$?
 said=$(grep -c 'fatal: .*libcannot_be_made.so: vcix_accel_model() returned no table$' "$BUILD/cannot_be_made.gem5.log")
 why=$(grep -Fxc 'vcix_accel: the model cannot be made: no such unit can be built' "$BUILD/cannot_be_made.gem5.log")
@@ -204,14 +195,12 @@ grep -E '^(PASS|FAIL)  ' "$BUILD/instances.log"
 # seen <log> <entry> <commits>: remembers' reports of <entry> by an instance that had seen <commits>.
 seen() { grep -Fxc "[model] $2, commits seen $3" "$1"; }
 
-# Spike makes one instance per hart: with two harts, two are configured.
 spike_run "$REMEMBERS" "" "$BUILD/pair" -p2 > "$BUILD/harts.spike.log" 2>&1; rc=$?
 made=$(seen "$BUILD/harts.spike.log" configure 0)
 ok=0; [ "$rc" = 0 ] && [ "$made" = 2 ] && ok=1
 report $ok "spike with two harts makes two instances (exit $rc, configured $made of 2)"
 
-# gem5 makes one instance per unit. pair.S issues its second instruction while the first is
-# in flight, and remembers takes one at a time: the second goes to the second unit, if any.
+# pair.S issues its second instruction while the first is in flight: it goes to the second unit, if any.
 for units in 1 2; do
   log="$BUILD/units-$units.gem5.log"
   gem5_run "$BUILD/m5out-units-$units" "$REMEMBERS" "" "$BUILD/pair" --units $units > "$log" 2>&1; rc=$?
@@ -221,7 +210,6 @@ for units in 1 2; do
   else report $ok "gem5 with two units naming one library: each instance sees one commit (exit $rc, configured $made, first commits $first, second commits $second)"; fi
 done
 
-# A model that cannot be configured: the simulator says why and stops, and no face is called.
 REASON="this machine has no such unit"
 for sim in spike gem5 probe; do
   log="$BUILD/refuses.$sim.log"
@@ -240,8 +228,7 @@ done
 
 echo "-- in flight"
 
-# gem5 only. always_accepts bounds nothing itself and forty.S issues forty owned instructions
-# back to back, so what holds them back is the unit's vcixMaxInFlight: 4, then gem5's default.
+# gem5 only: forty.S issues forty owned instructions back to back, under vcixMaxInFlight 4, then gem5's default.
 
 # most <log>: the most instructions the model was told were in flight, at any call.
 most() { sed -n 's/^\[model\] \(accept\|issue\) pending=\([0-9]*\)$/\2/p' "$1" | sort -n | tail -n 1; }
@@ -260,8 +247,7 @@ report $ok "gem5 with the default bound lets the model go past four, and its in-
 
 echo "-- processor state"
 
-# gem5 only, on bare metal: status.S ends with one bit per failed check. With FS off the
-# model must see no commit of sf.vc.v.fv (2c2552db) and one of sf.vc.v.xv (2825c1db).
+# gem5 only, on bare metal: status.S ends with one bit per failed check.
 gem5_bare_run "$BUILD/m5out-status" "$BUILD/libprint_args.so" "$BUILD/status" > "$BUILD/status.gem5.log" 2>&1; rc=$?
 float=$(grep -c '^\[commit \] insn=2c2552db ' "$BUILD/status.gem5.log"); integer=$(grep -c '^\[commit \] insn=2825c1db ' "$BUILD/status.gem5.log")
 ok=0; [ "$rc" = 0 ] && [ "$float" = 0 ] && [ "$integer" = 1 ] && ok=1
@@ -269,8 +255,7 @@ report $ok "gem5: writing vd dirties VS, and FS off refuses only a form that rea
 
 echo "-- harness"
 
-# An earlier run left an ELF under the same name and the assembler now fails:
-# the stale ELF must not survive to be run.
+# A stale ELF must not survive a failed assembly.
 rv_program "$HERE/returns3.S" "$BUILD/stale" || { echo "FAIL  returns3.S does not build"; exit 2; }
 mkdir -p "$BUILD/no-assembler"
 printf '#!/bin/sh\nexit 1\n' > "$BUILD/no-assembler/clang"
@@ -279,7 +264,6 @@ PATH="$BUILD/no-assembler:$PATH" rv_program "$HERE/returns3.S" "$BUILD/stale"; r
 ok=0; [ "$rc" != 0 ] && [ ! -e "$BUILD/stale" ] && ok=1
 report $ok "a program whose assembler fails does not build and leaves no ELF (exit $rc)"
 
-# A segfault exits non-zero on both simulators, as an illegal instruction does.
 spike_run "$OWNS_ONE" "" "$BUILD/segfault" > "$BUILD/segfault.spike.log" 2>&1; rc=$?
 ok=0; [ "$rc" != 0 ] && ! spike_illegal "$BUILD/segfault.spike.log" && ok=1
 report $ok "spike: a segfault is not an illegal instruction (exit $rc)"
@@ -288,7 +272,6 @@ gem5_run "$BUILD/m5out-segfault" "$OWNS_ONE" "" "$BUILD/segfault" > "$BUILD/segf
 ok=0; [ "$rc" != 0 ] && ! gem5_illegal "$BUILD/segfault.gem5.log" && ok=1
 report $ok "gem5:  a segfault is not an illegal instruction (exit $rc)"
 
-# The program's exit code is the simulator's; a gem5 run cut short fails whatever the program returns.
 spike_run "$OWNS_ONE" "" "$BUILD/returns3" > "$BUILD/returns3.spike.log" 2>&1; rc=$?
 ok=0; [ "$rc" = 3 ] && ok=1
 report $ok "spike exits with the program's exit code (exit $rc, program returns 3)"

@@ -1,8 +1,6 @@
 #!/usr/bin/env bash
-# A model that accepts while others are in flight must really overlap on gem5: the
-# unit holds no instruction, the model sees what is in flight, and its depth is the limit.
+# A model that accepts while others are in flight must really overlap on gem5, up to its depth.
 # Usage: tests/pipeline/run.sh [build-dir [spike [pk [gem5.opt]]]]
-# Each defaults to what setup/setup.sh produced; see scripts/sim.sh.
 set -euo pipefail
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 source "$HERE/../../scripts/sim.sh"

@@ -1,5 +1,4 @@
-// Test model: accepts whatever is in flight and takes LATENCY cycles, so nothing
-// of its own bounds how many overlap. It reports what was in flight at each call.
+// Test model: accepts whatever is in flight, and reports what was in flight at each call.
 #include <cinttypes>
 #include <cstdio>
 

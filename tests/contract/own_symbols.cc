@@ -1,5 +1,5 @@
 // Test model: defines a function both simulators export (softfloat's f16_to_f32), reports
-// which one its own call reached, and allocates and frees memory the ways a model might.
+// which one its own call reached, and allocates and frees memory.
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
