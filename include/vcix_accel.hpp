@@ -69,6 +69,20 @@ class Config {
       throw ConfigError(key, value, "has a leading zero, which reads as octal or as decimal depending on the reader");
     return number;
   }
+  // The value as a hexadecimal number written 0x...; `fallback` only for an absent key.
+  // Text that is not such a number throws ConfigError.
+  uint64_t hex(const std::string &key, uint64_t fallback) const {
+    const char *value = get(key);
+    if (!value) return fallback;
+    if (std::strncmp(value, "0x", 2) != 0) throw ConfigError(key, value, "is not a hexadecimal number written 0x...");
+    const char *end = value + std::strlen(value);
+    uint64_t number = 0;
+    const std::from_chars_result parsed = std::from_chars(value + 2, end, number, 16);
+    if (parsed.ec == std::errc::invalid_argument || parsed.ptr != end)
+      throw ConfigError(key, value, "is not a hexadecimal number written 0x...");
+    if (parsed.ec == std::errc::result_out_of_range) throw ConfigError(key, value, "does not fit in 64 bits");
+    return number;
+  }
 
  private:
   const vcix_config *c_;

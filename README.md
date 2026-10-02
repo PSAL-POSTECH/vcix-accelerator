@@ -130,6 +130,11 @@ value on stderr and exit status 1. It is never read as 0 or replaced by the
 fallback. A model that reads a value itself reports a bad one the same way, by
 throwing `vcix_accel::ConfigError` from `configure`.
 
+`config.hex("key", fallback)` reads a value as a hexadecimal number, for the
+addresses a machine description holds: `0x` and then hex digits, within 64
+bits. Anything else that is present -- `8000`, `0x`, `0x80zz`, `0X80` -- is the
+same configuration error.
+
 Then one line registers it:
 
 ```cpp
