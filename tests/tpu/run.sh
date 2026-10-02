@@ -28,7 +28,7 @@ times() { grep -Fxc "[tpu] $2" "$BUILD/tpu-$1.gem5.log"; }
 
 lines() { grep -c "^\[tpu\] $2 " "$BUILD/tpu-$1.gem5.log"; }
 
-for program in sfu one_cycle systolic_stream systolic_full; do
+for program in sfu one_cycle systolic_stream systolic_full xlu; do
   rv_program "$HERE/$program.S" "$BUILD/tpu-$program" || { echo "FAIL  $program.S does not build"; exit 2; }
 done
 printf 'tpu_trace: 1\ntpu_sfu_latency_cycles: 4\n' > "$BUILD/tpu-latency-4.yml"
@@ -88,17 +88,40 @@ full=$(said systolic_full \
 report "lines $full of $(lines systolic_full issue)" "lines 3 of 11" \
   "with the output queue full the array stops, and moves again in the cycle after a pop"
 
+echo "-- cross-lane unit: a delay line of 3 slots, queues of 8"
+on_gem5 xlu xlu "$HERE/xlu.yml"
+
+delay=$(said xlu "issue xlu_push: the first, input queue 0, output queue 0" \
+  "issue xlu_pop: 5 cycles after the last issue, 0 in flight, input queue 0, output queue 2")
+report "exit ${rc[xlu]}, lines $delay" "exit 0, lines 2" \
+  "a pop of two is issued 2 + 3 cycles after the push of two, as the second element is in the output queue"
+
+pushes=()
+for queues in "0 0" "1 0" "2 0" "3 0" "4 1" "5 2" "6 3"; do
+  pushes+=("issue xlu_push: 1 cycles after the last issue, 0 in flight, input queue ${queues% *}, output queue ${queues#* }")
+done
+pushes+=("issue xlu_push: 2 cycles after the last issue, 0 in flight, input queue 6, output queue 5")
+report "lines $(said xlu "${pushes[@]}")" "lines 8" \
+  "pushes of two go in one per cycle while the input queue has room, then wait for it"
+
+full=$(said xlu \
+  "issue xlu_pop: 1 cycles after the last issue, 0 in flight, input queue 7, output queue 8" \
+  "issue xlu_pop: 1 cycles after the last issue, 0 in flight, input queue 6, output queue 7")
+report "lines $full of $(lines xlu issue)" "lines 2 of 13" \
+  "with the output queue full the unit stops, and moves again in the cycle after a pop"
+
 echo "-- one-cycle instructions"
 on_gem5 one_cycle one_cycle "$HERE/trace.yml"
 
 one_cycle=()
-for name in xlu_push vlane_idx xlu_push_pattern compute xlu_pop dma_config_desc mvin mvin2 mvin3 mvout; do
+for name in vlane_idx compute dma_config_desc mvin mvin2 mvin3 mvout; do
   one_cycle+=("commit $name: 1 cycles after its issue")
 done
-drained=$(times one_cycle "issue xlu_push: 10 cycles after the last issue, 0 in flight")
+drained=$(times one_cycle \
+  "issue systolic weight push: 10 cycles after the last issue, 0 in flight, input queue 0, output queue 0")
 commits="$(said one_cycle "${one_cycle[@]}") of $(lines one_cycle commit)"
 report "exit ${rc[one_cycle]}, behind an empty model $drained, commits $commits" \
-  "exit 0, behind an empty model 1, commits 10 of 11" \
+  "exit 0, behind an empty model 1, commits 7 of 9" \
   "gem5 takes each custom-2 and DMA instruction of tpu::Misc and commits it one cycle after its issue"
 
 echo "-- the model"

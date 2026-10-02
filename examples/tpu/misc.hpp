@@ -25,14 +25,11 @@ class Misc {
   void reset() {}
 
  private:
-  // custom-2: lane number, compute, cross-lane unit. custom-1: DMA.
+  // custom-2: lane number, compute. custom-1: DMA.
   static constexpr uint32_t FUNCTION = 0xFE00707F;
   static constexpr vcix_accel::Encoding ENCODINGS[] = {
       {0x0000305B, FUNCTION, "vlane_idx"},
       {0x0600305B, FUNCTION, "compute"},
-      {0x2E00305B, FUNCTION, "xlu_push"},
-      {0xAE00305B, FUNCTION, "xlu_push_pattern"},
-      {0x0400305B, FUNCTION, "xlu_pop"},
       {0x0200302B, FUNCTION, "mvin2"},
       {0x0400302B, FUNCTION, "mvin"},
       {0x0600302B, FUNCTION, "mvout"},
