@@ -229,7 +229,7 @@ When the cycle a result is ready is not known at issue, `issue` returns
   gem5 warns once for an instruction that has waited `vcixReadyWarnCycles`
   cycles (a parameter of the unit, 1000000 by default, 0 for never).
 
-`tests/contract/waits.cc` is a unit whose pop is taken at once and waits
+`tests/contract/timing.cc` has such a pop: it is taken at once and waits
 inside for its data.
 
 Spike calls none of this. When the program exits, the simulation ends,
@@ -238,8 +238,8 @@ asks nothing of the memory system. In a table written by hand `tick` may be
 NULL, and `squash` is the model's to implement.
 
 A queue of two commands, worked on one at a time for ten cycles each
-(`tests/contract/queued.cc` is this model, with an instruction that waits for
-the queue to empty):
+(`tests/contract/timing.cc` has this queue, with an instruction that waits for
+it to empty):
 
 ```cpp
 bool can_accept(const Insn &, Cycle) const override { return queue_.size() < 2; }
@@ -326,7 +326,7 @@ tools/timing_probe.cc     drives a model's timing face without gem5
 tests/run.sh              every test below
 tests/contract/           the rules of the interface: ownership, the machine
                           description, the model table, instances, tick,
-                          processor state, and the test harness
+                          squash, a late result, processor state
 tests/pipeline/           a pipelined model overlaps instructions on gem5
 tests/print_args/         the example reaches the model once per instruction
 setup/                    the pinned environment: versions.env, the scripts

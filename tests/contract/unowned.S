@@ -1,4 +1,4 @@
-# One instruction the owns_one model owns, then one in custom-2 that it does not.
+# One instruction the reports model owns, then one in custom-2 that it does not.
     .text
     .globl main
 main:

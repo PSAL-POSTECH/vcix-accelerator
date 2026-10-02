@@ -15,17 +15,9 @@ function(vcix_accel_add_model name source)
 endfunction()
 
 vcix_accel_add_model(print_args examples/print_args/print_args.cc)
-vcix_accel_add_model(owns_one tests/contract/owns_one.cc)
 vcix_accel_add_model(pipelined tests/pipeline/pipelined.cc)
-vcix_accel_add_model(shows_config tests/contract/shows_config.cc)
-vcix_accel_add_model(own_symbols tests/contract/own_symbols.cc)
-vcix_accel_add_model(remembers tests/contract/remembers.cc)
-vcix_accel_add_model(always_accepts tests/contract/always_accepts.cc)
-vcix_accel_add_model(refuses tests/contract/refuses.cc)
-vcix_accel_add_model(queued tests/contract/queued.cc)
-vcix_accel_add_model(speculates tests/contract/speculates.cc)
-vcix_accel_add_model(waits tests/contract/waits.cc)
-vcix_accel_add_model(ready_only tests/contract/ready_only.cc)
+vcix_accel_add_model(reports tests/contract/reports.cc)
+vcix_accel_add_model(timing tests/contract/timing.cc)
 
 # tests/contract: one source built twice under the same class name, hidden and not.
 foreach(which 1 2)
@@ -35,18 +27,22 @@ foreach(which 1 2)
   target_compile_definitions(same_name_default_${which} PRIVATE WHICH=${which})
   set_target_properties(same_name_default_${which} PROPERTIES CXX_VISIBILITY_PRESET default VISIBILITY_INLINES_HIDDEN OFF)
 endforeach()
-add_executable(load_two tests/contract/load_two.cc)
-target_link_libraries(load_two PRIVATE vcix_accel ${CMAKE_DL_LIBS})
 
-# tests/contract: tables a caller must refuse, or take with reset left NULL.
-vcix_accel_add_model(other_abi tests/contract/other_abi.cc)
-vcix_accel_add_model(no_reset tests/contract/no_reset.cc)
-vcix_accel_add_model(null_table tests/contract/null_table.cc)
-vcix_accel_add_model(cannot_be_made tests/contract/cannot_be_made.cc)
+# tests/contract: a table written by hand, with `ready` and without; three libraries a caller must refuse.
+vcix_accel_add_model(ready_only tests/contract/by_hand.cc)
+target_compile_definitions(ready_only PRIVATE READY=1)
+vcix_accel_add_model(no_optional tests/contract/by_hand.cc)
+target_compile_definitions(no_optional PRIVATE READY=0)
+vcix_accel_add_model(null_table tests/contract/refused.cc)
+target_compile_definitions(null_table PRIVATE WHICH=1)
+vcix_accel_add_model(other_abi tests/contract/refused.cc)
+target_compile_definitions(other_abi PRIVATE WHICH=2)
+vcix_accel_add_model(cannot_be_made tests/contract/refused.cc)
+target_compile_definitions(cannot_be_made PRIVATE WHICH=3)
 
-# tests/contract: instances of one library share no state.
-add_executable(instances tests/contract/instances.cc)
-target_link_libraries(instances PRIVATE vcix_accel ${CMAKE_DL_LIBS})
+# tests/contract: the checks that need no simulator.
+add_executable(direct tests/contract/direct.cc)
+target_link_libraries(direct PRIVATE vcix_accel ${CMAKE_DL_LIBS})
 
 add_executable(timing_probe tools/timing_probe.cc)
 target_link_libraries(timing_probe PRIVATE vcix_accel ${CMAKE_DL_LIBS})

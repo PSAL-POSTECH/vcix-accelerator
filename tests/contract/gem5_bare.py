@@ -1,5 +1,4 @@
-# Test fixture: a bare-metal RISC-V machine in M mode, with one accelerator unit.
-# Usage: gem5.opt gem5_bare.py --model M.so ELF
+# Test fixture: a bare-metal RISC-V machine in M mode, with one accelerator unit. Usage: gem5.opt gem5_bare.py --model M.so ELF
 import argparse
 import sys
 

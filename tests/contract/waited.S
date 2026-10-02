@@ -1,5 +1,4 @@
-# A pop with nothing to pop, the push that feeds it, and a read of what the pop writes. Then a pop
-# behind a jump the core mispredicts, never fed, and at the jump's target a read of the same register.
+# A pop, the command that feeds it and a use of what the pop writes; then a pop behind a jump the core mispredicts, never fed, and at the jump's target a use of the same register.
     .option norvc
     .text
     .globl main

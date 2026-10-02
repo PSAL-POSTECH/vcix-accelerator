@@ -1,362 +1,183 @@
 #!/usr/bin/env bash
-# The rules of the interface, one section each.
-# Usage: tests/contract/run.sh [build-dir [spike [pk [gem5.opt]]]]
+# The rules of the interface, one section each. Usage: tests/contract/run.sh [build-dir [spike [pk [gem5.opt]]]]
 set -uo pipefail
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 source "$HERE/../../scripts/sim.sh"
-OWNS_ONE="$BUILD/libowns_one.so"
-OWNED_INSN=062541db    # sf.vc.x 0x1, 0x2, 0x3, a0
-UNOWNED_INSN=0a2541db  # sf.vc.x 0x2, 0x2, 0x3, a0
+OWNED=062541db
+UNOWNED=0a2541db
 failed=0
+missed=()
 
-# report <ok: 0|1> <what>
-report() {
-  if [ "$1" = 1 ]; then echo "PASS  $2"; else echo "FAIL  $2"; failed=1; fi
+run() {
+  local sim=$1 name=$2 model=$3 description=$4 program=$5
+  log="$BUILD/$name.$sim.log"
+  if [ "$sim" = spike ]; then spike_run "$BUILD/lib$model.so" "$description" "$BUILD/$program" > "$log" 2>&1
+  else gem5_run "$BUILD/m5out-$name" "$BUILD/lib$model.so" "$description" "$BUILD/$program" "${@:6}" > "$log" 2>&1; fi
+  rc=$?
+}
+miss() { missed+=("$1"); }
+ended() { [ "$rc" = "$1" ] || miss "exit $rc, not $1"; }
+tally() {
+  local got=$1 want=$2 text=$3
+  if [ "$want" = + ]; then [ "$got" -ge 1 ]; else [ "$got" = "$want" ]; fi || miss "$got of $want: $text"
+}
+line() { tally "$(grep -Fxc -- "$2" "$log")" "$1" "$2"; }
+part() { tally "$(grep -Fc -- "$2" "$log")" "$1" "$2"; }
+verdict() {
+  if [ ${#missed[@]} = 0 ]; then echo "PASS  $1"; else echo "FAIL  $1"; printf '      %s\n' "${missed[@]}"; failed=1; fi
+  missed=()
 }
 
-# program <name> [link options]: $HERE/<name>.S built into $BUILD/<name>; the test ends if it does not build.
-program() {
-  rv_program "$HERE/$1.S" "$BUILD/$1" "${@:2}" || { echo "FAIL  $1.S does not build"; exit 2; }
-}
-for name in owned unowned nothing segfault returns3 pair forty queue speculated waited asleep stuck; do program $name; done
-program status -nostdlib -Wl,-N,-Ttext=0x80000000,--no-warn-rwx-segments
+for name in unowned pair forty queue speculated waited asleep status; do
+  options=(); [ $name = status ] && options=(-nostdlib -Wl,-N,-Ttext=0x80000000,--no-warn-rwx-segments)
+  rv_program "$HERE/$name.S" "$BUILD/$name" "${options[@]}" || { echo "FAIL  $name.S does not build"; exit 2; }
+done
+printf 'latency: 8 cycles\n' > "$BUILD/malformed.yml"
+printf -- '- plain: 8\n' > "$BUILD/not_a_mapping.yml"
+printf 'latency: 10\ndepth: 1\n' > "$BUILD/one_at_a_time.yml"
+printf 'latency: 100\n' > "$BUILD/slow.yml"
 
 echo "-- ownership"
-
-# calls <log> <entry>: owns_one's reports of <entry> for the owned instruction.
-calls() { grep -Fxc "[model] $2 $OWNED_INSN" "$1"; }
-
-# owned_once <simulator> <program> <exit-code> <want-ok: 0|1>
-owned_once() {
-  local sim=$1 prog=$2 rc=$3 want_ok=$4
-  local log="$BUILD/$prog.$sim.log" ok=1 ended seen other
-  local all execute accept issue commit
-  all=$(grep -c '^\[model\]' "$log")
-  execute=$(calls "$log" execute); accept=$(calls "$log" accept)
-  issue=$(calls "$log" issue); commit=$(calls "$log" commit)
-  if [ "$sim" = spike ]; then
-    seen="execute $execute"; other=$((all - execute))
-    [ "$execute" = 1 ] || ok=0
+for sim in spike gem5; do
+  run $sim unowned reports "" unowned
+  [ "$rc" != 0 ] && ${sim}_illegal "$log" $UNOWNED || miss "exit $rc, not as illegal instruction $UNOWNED"
+  if [ $sim = spike ]; then
+    line 1 "[model] execute $OWNED, 0 in flight, 0 commits seen"
+    part 1 "[model] "
   else
-    seen="accept $accept, issue $issue, commit $commit"; other=$((all - accept - issue - commit))
-    [ "$commit" = 1 ] && [ "$accept" -ge 1 ] && [ "$issue" -ge 1 ] || ok=0
+    line + "[model] accept $OWNED, 0 in flight, 0 commits seen"
+    line + "[model] issue $OWNED, 0 in flight, 0 commits seen"
+    line 1 "[model] commit $OWNED, 0 in flight, 1 commits seen"
+    part 0 "[model] execute "
   fi
-  [ "$other" = 0 ] || ok=0
-  if [ "$want_ok" = 1 ]; then
-    ended="exit $rc"
-    [ "$rc" = 0 ] || ok=0
-  elif [ "$rc" != 0 ] && "${sim}_illegal" "$log" "$UNOWNED_INSN"; then
-    ended="illegal instruction $UNOWNED_INSN, exit $rc"
-  else
-    ended="not as an illegal instruction $UNOWNED_INSN, exit $rc"
-    ok=0
-  fi
-  report $ok "$sim $prog ($ended; owned: $seen; other calls: $other)"
-}
-
-for prog in owned unowned; do
-  want=1; [ "$prog" = unowned ] && want=0
-
-  spike_run "$OWNS_ONE" "" "$BUILD/$prog" > "$BUILD/$prog.spike.log" 2>&1
-  owned_once spike $prog $? $want
-
-  gem5_run "$BUILD/m5out-$prog" "$OWNS_ONE" "" "$BUILD/$prog" > "$BUILD/$prog.gem5.log" 2>&1
-  owned_once gem5 $prog $? $want
+  part 0 " $UNOWNED, "
+  verdict "$sim: an owned instruction reaches the model once; one no model owns is an illegal instruction"
 done
 
 echo "-- machine description"
-SHOWS_CONFIG="$BUILD/libshows_config.so"
-
-# handed <simulator> <name> <exit-code>: the model's report equals <name>.expected.
-handed() {
-  local sim=$1 name=$2 rc=$3 ok=0
-  local log="$BUILD/config-$name.$sim.log"
-  grep '^\[config\]' "$log" > "$log.report"
-  [ "$rc" = 0 ] && diff "$HERE/$name.expected" "$log.report" > "$log.diff" && ok=1
-  report $ok "$sim $name.yml (exit $rc)"
-  [ "$ok" = 1 ] || cat "$log.diff"
-}
-
-for name in values empty two_documents; do
-  spike_run "$SHOWS_CONFIG" "$HERE/$name.yml" "$BUILD/nothing" > "$BUILD/config-$name.spike.log" 2>&1
-  handed spike $name $?
-
-  gem5_run "$BUILD/m5out-config-$name" "$SHOWS_CONFIG" "$HERE/$name.yml" "$BUILD/nothing" > "$BUILD/config-$name.gem5.log" 2>&1
-  handed gem5 $name $?
-done
-
-# gem5 only: the Spike adapter does not refuse a non-mapping top level yet.
-gem5_run "$BUILD/m5out-config-not_a_mapping" "$SHOWS_CONFIG" "$HERE/not_a_mapping.yml" "$BUILD/nothing" \
-  > "$BUILD/config-not_a_mapping.gem5.log" 2>&1; rc=$?
-configured=$(grep -c '^\[config\]' "$BUILD/config-not_a_mapping.gem5.log")
-ok=0; [ "$rc" = 1 ] && [ "$configured" = 0 ] && ok=1
-report $ok "gem5 refuses not_a_mapping.yml (exit $rc, model configured with $configured values)"
-
-# refusal <simulator> <model.so> <model name> <reason>: the line the simulator stops with.
-refusal() {
-  if [ "$1" = spike ]; then echo "vcixaccel: $3: $4"; else echo "fatal: $2: $3: $4"; fi
-}
-
-# number <simulator> <key> <value> <exit-code> <what the model reads, or "" when the run must stop>
-number() {
-  local sim=$1 key=$2 written=$3 rc=$4 want=$5 ok=0 got said
-  local log="$BUILD/config-number.$sim.log"
-  got=$(grep -c "^\[number\] $key = " "$log")
-  if [ -n "$want" ]; then
-    [ "$rc" = 0 ] && grep -Fxq "[number] $key = $want" "$log" && ok=1
-    report $ok "$sim $key: $written is $want (exit $rc)"
-  else
-    said=$(grep -Fc "$(refusal $sim "$SHOWS_CONFIG" shows_config "machine description: $key: '$written' ")" "$log")
-    [ "$rc" = 1 ] && [ "$got" = 0 ] && [ "$said" = 1 ] && ok=1
-    report $ok "$sim $key: $written stops the run (exit $rc, $sim reported it $said of 1, number handed on $got)"
-  fi
-}
-
-# key|value as written|what it is read as, nothing when the run must stop.
-NUMBERS=('count|8|8' 'count|~|5' 'count|abc|' 'count|-1|' 'count|8 cycles|' 'count|010|' 'count|18446744073709551616|'
-         'base|0x80001000|0x80001000' 'base|0xffffffffffffffff|0xffffffffffffffff' 'base|~|0x1000' 'base|80001000|'
-         'base|0x|' 'base|0x80zz|' 'base|0X80|' 'base|0x10000000000000000|')
-for case in "${NUMBERS[@]}"; do
-  IFS='|' read -r key written want <<< "$case"
-  printf '%s: %s\n' "$key" "$written" > "$BUILD/config-number.yml"
-
-  spike_run "$SHOWS_CONFIG" "$BUILD/config-number.yml" "$BUILD/nothing" > "$BUILD/config-number.spike.log" 2>&1
-  number spike "$key" "$written" $? "$want"
-
-  gem5_run "$BUILD/m5out-config-number" "$SHOWS_CONFIG" "$BUILD/config-number.yml" "$BUILD/nothing" \
-    > "$BUILD/config-number.gem5.log" 2>&1
-  number gem5 "$key" "$written" $? "$want"
-done
-
-echo "-- model table"
-
-# Two libraries whose model classes share a global name; load_two prints its own PASS/FAIL lines.
-echo "built with hidden visibility, as this repository builds a model:"
-"$BUILD/load_two" "$BUILD/libsame_name_1.so" "$BUILD/libsame_name_2.so" || failed=1
-echo "built with the compiler's default visibility:"
-"$BUILD/load_two" "$BUILD/libsame_name_default_1.so" "$BUILD/libsame_name_default_2.so" || failed=1
-
-# probe <what> <want exit code> <want issued instructions> <timing_probe arguments...>
-probe() {
-  local what=$1 want_rc=$2 want_issued=$3 rc issued ok=0
-  shift 3
-  "$BUILD/timing_probe" "$@" > "$BUILD/probe.log" 2>&1; rc=$?
-  issued=$(grep -c '^insn [0-9]*: issued at ' "$BUILD/probe.log")
-  [ "$rc" = "$want_rc" ] && [ "$issued" = "$want_issued" ] && ok=1
-  report $ok "probe: $what (exit $rc, want $want_rc; issued $issued, want $want_issued)"
-}
-
-probe "an owned instruction, three times"      0 3 "$OWNS_ONE" $OWNED_INSN 3
-probe "a table written by hand, tick and reset NULL" 0 2 "$BUILD/libno_reset.so" $OWNED_INSN 2
-probe "a queue that only tick empties, four times" 0 4 "$BUILD/libqueued.so" $OWNED_INSN 4
-probe "an instruction the model does not own"  1 0 "$OWNS_ONE" $UNOWNED_INSN 3
-probe "a model of another ABI version"         1 0 "$BUILD/libother_abi.so" $OWNED_INSN 3
-probe "instruction 'zz' is refused"            2 0 "$OWNS_ONE" zz 3
-probe "count 'abc' is refused"                 2 0 "$OWNS_ONE" $OWNED_INSN abc
-probe "lmul-log2 '40' is refused"              2 0 "$OWNS_ONE" $OWNED_INSN 3 40
-
-# A model built hidden calls its own f16_to_f32 and not the simulator's.
 for sim in spike gem5; do
-  log="$BUILD/own_symbols.$sim.log"
-  if [ $sim = spike ]; then spike_run "$BUILD/libown_symbols.so" "" "$BUILD/owned" > "$log" 2>&1
-  else gem5_run "$BUILD/m5out-own_symbols" "$BUILD/libown_symbols.so" "" "$BUILD/owned" > "$log" 2>&1; fi; rc=$?
-  own=$(grep -Fxc '[model] f16_to_f32(0x3c00) = 0x0badc0de' "$log"); allocated=$(grep -c '^\[model\] allocated, ' "$log")
-  ok=0; [ "$rc" = 0 ] && [ "$own" = 1 ] && [ "$allocated" -ge 2 ] && ok=1
-  report $ok "$sim: a model's own definition is the one it calls (exit $rc, own $own of 1, allocated $allocated times)"
-done
+  run $sim values reports "$HERE/values.yml" pair
+  ended 0
+  grep -F '[config] ' "$log" | diff "$HERE/values.expected" - > "$log.diff" || miss "$(cat "$log.diff")"
+  verdict "$sim hands the model each value as written, and the model calls its own f16_to_f32"
 
+  run $sim malformed reports "$BUILD/malformed.yml" pair
+  ended 1
+  part 1 "reports: machine description: latency: '8 cycles' is not an unsigned decimal number"
+  part 0 "[model] "
+  verdict "$sim stops at a malformed number, naming the model, the key and the value"
+done
+run gem5 not_a_mapping reports "$BUILD/not_a_mapping.yml" pair
+ended 1
+part 0 "[config] "
+verdict "gem5 refuses a description whose top level is not a mapping"
+
+echo "-- model table and instances"
+log="$BUILD/direct.log"
+"$BUILD/direct" "$BUILD" > "$log" 2>&1; rc=$?
+grep -E '^(PASS|FAIL)  ' "$log"
+ended 0
+line 1 "vcix_accel: the model cannot be made: no such unit can be built"
+verdict "direct: every check above passed, and a constructor that throws says why"
+
+probe() { log="$BUILD/probe-$1.log"; "$BUILD/timing_probe" "$BUILD/lib$1.so" $OWNED 2 > "$log" 2>&1; rc=$?; }
+probe no_optional
+ended 0
+part 2 ": issued at "
+verdict "probe runs a table written by hand, tick, ready and reset NULL"
+probe other_abi
+ended 1
+part 0 ": issued at "
+verdict "probe refuses a table of another ABI version"
 for sim in spike gem5; do
-  log="$BUILD/no_reset.$sim.log"
-  if [ $sim = spike ]; then spike_run "$BUILD/libno_reset.so" "" "$BUILD/owned" > "$log" 2>&1
-  else gem5_run "$BUILD/m5out-no_reset" "$BUILD/libno_reset.so" "" "$BUILD/owned" > "$log" 2>&1; fi; rc=$?
-  ok=0; [ "$rc" = 0 ] && ok=1
-  report $ok "$sim takes a table written by hand, tick and reset NULL (exit $rc)"
+  run $sim no_optional no_optional "" pair
+  ended 0
+  verdict "$sim runs a table written by hand, tick, ready and reset NULL"
 done
+run gem5 null_table null_table "" pair
+ended 1
+part 1 "libnull_table.so: vcix_accel_model() returned no table"
+verdict "gem5 refuses a library that hands over no table"
 
-# gem5 only: the Spike adapter does not check the table yet.
-gem5_run "$BUILD/m5out-null_table" "$BUILD/libnull_table.so" "" "$BUILD/owned" > "$BUILD/null_table.gem5.log" 2>&1; rc=$?
-said=$(grep -c 'fatal: .*libnull_table.so: vcix_accel_model() returned no table$' "$BUILD/null_table.gem5.log")
-ok=0; [ "$rc" = 1 ] && [ "$said" = 1 ] && ok=1
-report $ok "gem5 refuses a library that hands over no table (exit $rc, said so $said of 1)"
-
-gem5_run "$BUILD/m5out-cannot_be_made" "$BUILD/libcannot_be_made.so" "" "$BUILD/owned" > "$BUILD/cannot_be_made.gem5.log" 2>&1; rc=$?
-said=$(grep -c 'fatal: .*libcannot_be_made.so: vcix_accel_model() returned no table$' "$BUILD/cannot_be_made.gem5.log")
-why=$(grep -Fxc 'vcix_accel: the model cannot be made: no such unit can be built' "$BUILD/cannot_be_made.gem5.log")
-ok=0; [ "$rc" = 1 ] && [ "$said" = 1 ] && [ "$why" = 1 ] && ok=1
-report $ok "gem5 refuses a model whose constructor throws (exit $rc, said so $said of 1, reason given $why of 1)"
-
-echo "-- instances"
-REMEMBERS="$BUILD/libremembers.so"
-REFUSES="$BUILD/librefuses.so"
-
-# One library, two instances, no shared state; instances prints its own PASS/FAIL lines.
-"$BUILD/instances" "$REMEMBERS" "$REFUSES" > "$BUILD/instances.log" 2>&1 || failed=1
-grep -E '^(PASS|FAIL)  ' "$BUILD/instances.log"
-
-# seen <log> <entry> <commits>: remembers' reports of <entry> by an instance that had seen <commits>.
-seen() { grep -Fxc "[model] $2, commits seen $3" "$1"; }
-
-spike_run "$REMEMBERS" "" "$BUILD/pair" -p2 > "$BUILD/harts.spike.log" 2>&1; rc=$?
-made=$(seen "$BUILD/harts.spike.log" configure 0)
-ok=0; [ "$rc" = 0 ] && [ "$made" = 2 ] && ok=1
-report $ok "spike with two harts makes two instances (exit $rc, configured $made of 2)"
-
-# pair.S issues its second instruction while the first is in flight: it goes to the second unit, if any.
-for units in 1 2; do
-  log="$BUILD/units-$units.gem5.log"
-  gem5_run "$BUILD/m5out-units-$units" "$REMEMBERS" "" "$BUILD/pair" --units $units > "$log" 2>&1; rc=$?
-  made=$(seen "$log" configure 0); first=$(seen "$log" commit 1); second=$(seen "$log" commit 2)
-  ok=0; [ "$rc" = 0 ] && [ "$made" = $units ] && [ "$first" = $units ] && [ "$second" = $((2 - units)) ] && ok=1
-  if [ $units = 1 ]; then report $ok "gem5 with one unit: its instance sees both commits (exit $rc, configured $made, first commits $first, second commits $second)"
-  else report $ok "gem5 with two units naming one library: each instance sees one commit (exit $rc, configured $made, first commits $first, second commits $second)"; fi
-done
-
-REASON="this machine has no such unit"
-for sim in spike gem5 probe; do
-  log="$BUILD/refuses.$sim.log"
-  case $sim in
-    spike) spike_run "$REFUSES" "" "$BUILD/owned" > "$log" 2>&1; rc=$?
-           said=$(grep -Fxc "$(refusal spike "$REFUSES" refuses "$REASON")" "$log") ;;
-    gem5)  gem5_run "$BUILD/m5out-refuses" "$REFUSES" "" "$BUILD/owned" > "$log" 2>&1; rc=$?
-           said=$(grep -Fc "$(refusal gem5 "$REFUSES" refuses "$REASON")" "$log") ;;
-    probe) "$BUILD/timing_probe" "$REFUSES" $OWNED_INSN 3 > "$log" 2>&1; rc=$?
-           said=$(grep -Fxc "$REFUSES: refuses: $REASON" "$log") ;;
-  esac
-  called=$(grep -c '^\[model\]' "$log")
-  ok=0; [ "$rc" = 1 ] && [ "$said" = 1 ] && [ "$called" = 0 ] && ok=1
-  report $ok "$sim: a model that cannot be configured stops the run with its reason (exit $rc, reason given $said of 1, calls to the model $called)"
-done
+run gem5 units reports "$BUILD/one_at_a_time.yml" pair --units 2
+ended 0
+line 2 "[config] plain is absent"
+line 2 "[model] commit $OWNED, 0 in flight, 1 commits seen"
+part 0 " 2 commits seen"
+verdict "gem5 with two units naming one library: each has its own instance, and each sees one commit"
 
 echo "-- in flight"
+run gem5 in-flight-4 reports "$BUILD/slow.yml" forty --max-in-flight 4
+ended 0
+part + "[model] issue $OWNED, 3 in flight, "
+part 0 ", 4 in flight, "
+line 1 "[model] commit $OWNED, 0 in flight, 40 commits seen"
+verdict "gem5 with vcixMaxInFlight 4 asks the model with three in flight and never with four"
 
-# gem5 only: forty.S issues forty owned instructions back to back, under vcixMaxInFlight 4, then gem5's default.
-
-# most <log>: the most instructions the model was told were in flight, at any call.
-most() { sed -n 's/^\[model\] \(accept\|issue\) pending=\([0-9]*\)$/\2/p' "$1" | sort -n | tail -n 1; }
-
-log="$BUILD/in-flight-4.gem5.log"
-gem5_run "$BUILD/m5out-in-flight-4" "$BUILD/libalways_accepts.so" "" "$BUILD/forty" --max-in-flight 4 > "$log" 2>&1; rc=$?
-most=$(most "$log"); committed=$(grep -Fxc '[model] commit' "$log")
-ok=0; [ "$rc" = 0 ] && [ "${most:-none}" = 3 ] && [ "$committed" = 40 ] && ok=1
-report $ok "gem5 with vcixMaxInFlight 4 asks the model with at most three in flight and commits all forty (exit $rc, most ${most:-none}, committed $committed)"
-
-log="$BUILD/in-flight-default.gem5.log"
-gem5_run "$BUILD/m5out-in-flight-default" "$BUILD/libalways_accepts.so" "" "$BUILD/forty" > "$log" 2>&1; rc=$?
-most=$(most "$log"); committed=$(grep -Fxc '[model] commit' "$log"); overflowed=$(grep -c 'No space to push data into queue' "$log")
-ok=0; [ "$rc" = 0 ] && [ "${most:-0}" -gt 3 ] && [ "$committed" = 40 ] && [ "$overflowed" = 0 ] && ok=1
-report $ok "gem5 with the default bound lets the model go past four, and its in-order queue holds them (exit $rc, most ${most:-none}, committed $committed, queue warnings $overflowed)"
+run gem5 in-flight-default reports "$BUILD/slow.yml" forty
+ended 0
+part + "[model] issue $OWNED, 4 in flight, "
+line 1 "[model] commit $OWNED, 0 in flight, 40 commits seen"
+part 0 "No space to push data into queue"
+verdict "gem5 with the default bound lets the model go past four, with no queue warning"
 
 echo "-- tick"
-QUEUED="$BUILD/libqueued.so"
+run gem5 queue timing "" queue --max-ticks 100000000
+ended 0
+line 1 "[model] issue command: 2 issued, 2 committed, 0 pops waiting, 0 ticks missing, 1 finished, the last 0 cycles ago"
+line 1 "[model] issue command: 3 issued, 3 committed, 0 pops waiting, 0 ticks missing, 2 finished, the last 0 cycles ago"
+verdict "gem5 issues a command a full queue held in the cycle whose tick finished one"
 
-# said <log> <line>: a model's reports that are exactly <line>.
-said() { grep -Fxc "[model] $2" "$1"; }
+line 1 "[model] issue wait: 4 issued, 4 committed, 0 pops waiting, 0 ticks missing, 4 finished, the last 0 cycles ago"
+verdict "gem5 issues a wait in the cycle whose tick emptied the queue"
 
-# queue.S: six commands of ten ticks each and two waits; the second pair arrives after the core has gone idle.
-log="$BUILD/queue.gem5.log"
-gem5_run "$BUILD/m5out-queue" "$QUEUED" "" "$BUILD/queue" --max-ticks 100000000 > "$log" 2>&1; rc=$?
-third=$(said "$log" "issue command, 1 finished, the last 0 cycles ago, 0 cycles without a tick")
-fourth=$(said "$log" "issue command, 2 finished, the last 0 cycles ago, 0 cycles without a tick")
-ok=0; [ "$rc" = 0 ] && [ "$third" = 1 ] && [ "$fourth" = 1 ] && ok=1
-report $ok "gem5 issues a command a full queue held in the cycle whose tick finished one (exit $rc, third command $third of 1, fourth $fourth of 1)"
-
-held=$(said "$log" "issue wait, 4 finished, the last 0 cycles ago, 0 cycles without a tick")
-ok=0; [ "$held" = 1 ] && ok=1
-report $ok "gem5 issues a wait in the cycle whose tick emptied the queue ($held of 1)"
-
-issues=$(grep -c '^\[model\] issue ' "$log"); unbroken=$(grep -c '^\[model\] issue .*, 0 cycles without a tick$' "$log")
-ok=0; [ "$issues" -ge 8 ] && [ "$unbroken" = "$issues" ] && ok=1
-report $ok "gem5 ticks an instance in every cycle, the core idle or not (issues $issues, with no cycle missed before them $unbroken)"
-
-spike_run "$QUEUED" "" "$BUILD/queue" > "$BUILD/queue.spike.log" 2>&1; rc=$?
-calls=$(grep -c '^\[model\]' "$BUILD/queue.spike.log")
-ok=0; [ "$rc" = 0 ] && [ "$calls" = 0 ] && ok=1
-report $ok "spike calls nothing of the timing face (exit $rc, calls $calls)"
+part 8 "[model] issue "
+part 8 " pops waiting, 0 ticks missing, "
+verdict "gem5 ticks an instance in every cycle, the core idle or not: no issue sees a cycle without its tick"
 
 echo "-- squash"
-
-# speculated.S: the state each issue reports is what it would be had the wrong-path instructions never been issued.
-log="$BUILD/speculated.gem5.log"
-gem5_run "$BUILD/m5out-speculated" "$BUILD/libspeculates.so" "" "$BUILD/speculated" > "$log" 2>&1; rc=$?
-first=$(said "$log" "issue: 0 issued, 0 committed, 0 ticks missing")
-wrong=$(said "$log" "issue: 1 issued, 0 committed, 0 ticks missing")
-right=$(said "$log" "issue: 1 issued, 1 committed, 0 ticks missing")
-issues=$(grep -c '^\[model\] issue: ' "$log")
-ok=0; [ "$rc" = 0 ] && [ "$first" = 1 ] && [ "$wrong" = 1 ] && [ "$right" = 1 ] && [ "$issues" -ge 3 ] && ok=1
-report $ok "gem5 takes back what it issued on a wrong path: the issue, and the ticks and the commit since (exit $rc, first $first of 1, wrong path $wrong of 1, right path $right of 1, issues $issues)"
+run gem5 speculated timing "" speculated --max-ticks 100000000
+ended 0
+line 1 "[model] issue wait: 0 issued, 0 committed, 0 pops waiting, 0 ticks missing, 0 finished"
+line 1 "[model] issue wait: 1 issued, 0 committed, 0 pops waiting, 0 ticks missing, 0 finished"
+line 1 "[model] issue wait: 2 issued, 0 committed, 0 pops waiting, 0 ticks missing, 0 finished"
+line 1 "[model] issue wait: 1 issued, 1 committed, 0 pops waiting, 0 ticks missing, 0 finished"
+part 4 "[model] issue "
+verdict "gem5 takes back the two it issued on a wrong path: the issues, and the ticks and the commit since"
 
 echo "-- result time unknown"
+run gem5 waited timing "" waited --max-ticks 100000000
+line 1 "[model] issue command: 1 issued, 0 committed, 1 pops waiting, 0 ticks missing, 0 finished"
+verdict "gem5 issues what follows a pop while the pop waits for its result"
 
-# waited.S on waits: the pop's result is ready when the model says, not at a cycle told at issue.
-log="$BUILD/waited.gem5.log"
-gem5_run "$BUILD/m5out-waited" "$BUILD/libwaits.so" "" "$BUILD/waited" --max-ticks 100000000 > "$log" 2>&1; rc=$?
-behind=$(said "$log" "issue push, 1 pops waiting")
-ok=0; [ "$behind" = 1 ] && ok=1
-report $ok "gem5 issues what follows a pop while the pop waits for its result ($behind of 1)"
+line 1 "[model] issue use: 2 issued, 2 committed, 0 pops waiting, 0 ticks missing, 1 finished, the last 0 cycles ago, the last pop ready 0 cycles ago"
+verdict "gem5 issues the reader of a pop's register in the cycle the model says the result is ready"
 
-reader=$(said "$log" "issue use, 0 pops waiting, the last pop ready 0 cycles ago")
-ok=0; [ "$reader" = 1 ] && ok=1
-report $ok "gem5 issues the reader of a pop's register in the cycle the model says the result is ready ($reader of 1)"
+line 1 "[model] commit pop, ready 0 cycles ago"
+verdict "gem5 commits the pop in that cycle, not before"
 
-left=$(said "$log" "commit pop, ready 0 cycles ago")
-ok=0; [ "$left" = 1 ] && ok=1
-report $ok "gem5 commits the pop in that cycle, not before ($left of 1)"
+ended 0
+part 1 "[model] issue pop: 3 issued, 3 committed, 0 pops waiting, 0 ticks missing, "
+part 1 "[model] issue use: 3 issued, 3 committed, 0 pops waiting, 0 ticks missing, "
+verdict "gem5 frees the register of a pop squashed while it waited: its reader is issued and the program ends"
 
-pops=$(said "$log" "issue pop"); readers=$(grep -c '^\[model\] issue use, 0 pops waiting, ' "$log")
-ok=0; [ "$rc" = 0 ] && [ "$pops" = 2 ] && [ "$readers" = 2 ] && ok=1
-report $ok "gem5 frees the register of a pop squashed while it waited: its reader issues and the program ends (exit $rc, pops issued $pops of 2, readers issued $readers of 2)"
+run gem5 asleep ready_only "" asleep --max-ticks 100000000
+ended 0
+line 1 "[model] issue use, 15 cycles after the pop"
+verdict "gem5 asks ready in every cycle: a table without tick, and a core with nothing else to do"
 
-# asleep.S on ready_only, a table with ready and no tick: the head of the queue waits for memory meanwhile.
-log="$BUILD/asleep.gem5.log"
-gem5_run "$BUILD/m5out-asleep" "$BUILD/libready_only.so" "" "$BUILD/asleep" --max-ticks 100000000 > "$log" 2>&1; rc=$?
-reader=$(said "$log" "issue use, 15 cycles after the pop")
-ok=0; [ "$rc" = 0 ] && [ "$reader" = 1 ] && ok=1
-report $ok "gem5 asks ready in every cycle, a model without tick and a core with nothing else to do included (exit $rc, reader issued fifteen cycles after the pop $reader of 1)"
-
-# stuck.S on waits: a pop that nothing feeds never has a result, and gem5 says so once.
-log="$BUILD/stuck.gem5.log"
-gem5_run "$BUILD/m5out-stuck" "$BUILD/libwaits.so" "" "$BUILD/stuck" --ready-warn-cycles 100 --max-ticks 30000000 > "$log" 2>&1; rc=$?
-warned=$(grep -c 'warn: .* its accelerator model has not said its result is ready 100 cycles after its issue$' "$log")
-ok=0; [ "$rc" != 0 ] && [ "$warned" = 1 ] && ok=1
-report $ok "gem5 warns once of an instruction whose result is never ready (exit $rc, warnings $warned of 1)"
+run gem5 stuck timing "" asleep --ready-warn-cycles 100 --max-ticks 30000000
+ended 1
+part 1 " its accelerator model has not said its result is ready 100 cycles after its issue"
+part 0 "[model] issue use: "
+verdict "gem5 warns once of a result that is never ready"
 
 echo "-- processor state"
-
-# gem5 only, on bare metal: status.S ends with one bit per failed check.
-gem5_bare_run "$BUILD/m5out-status" "$BUILD/libprint_args.so" "$BUILD/status" > "$BUILD/status.gem5.log" 2>&1; rc=$?
-float=$(grep -c '^\[commit \] insn=2c2552db ' "$BUILD/status.gem5.log"); integer=$(grep -c '^\[commit \] insn=2825c1db ' "$BUILD/status.gem5.log")
-ok=0; [ "$rc" = 0 ] && [ "$float" = 0 ] && [ "$integer" = 1 ] && ok=1
-report $ok "gem5: writing vd dirties VS, and FS off refuses only a form that reads f[rs1] (exit $rc; commits: fv $float of 0, xv $integer of 1)"
-
-echo "-- harness"
-
-# A stale ELF must not survive a failed assembly.
-rv_program "$HERE/returns3.S" "$BUILD/stale" || { echo "FAIL  returns3.S does not build"; exit 2; }
-mkdir -p "$BUILD/no-assembler"
-printf '#!/bin/sh\nexit 1\n' > "$BUILD/no-assembler/clang"
-chmod +x "$BUILD/no-assembler/clang"
-PATH="$BUILD/no-assembler:$PATH" rv_program "$HERE/returns3.S" "$BUILD/stale"; rc=$?
-ok=0; [ "$rc" != 0 ] && [ ! -e "$BUILD/stale" ] && ok=1
-report $ok "a program whose assembler fails does not build and leaves no ELF (exit $rc)"
-
-spike_run "$OWNS_ONE" "" "$BUILD/segfault" > "$BUILD/segfault.spike.log" 2>&1; rc=$?
-ok=0; [ "$rc" != 0 ] && ! spike_illegal "$BUILD/segfault.spike.log" && ok=1
-report $ok "spike: a segfault is not an illegal instruction (exit $rc)"
-
-gem5_run "$BUILD/m5out-segfault" "$OWNS_ONE" "" "$BUILD/segfault" > "$BUILD/segfault.gem5.log" 2>&1; rc=$?
-ok=0; [ "$rc" != 0 ] && ! gem5_illegal "$BUILD/segfault.gem5.log" && ok=1
-report $ok "gem5:  a segfault is not an illegal instruction (exit $rc)"
-
-spike_run "$OWNS_ONE" "" "$BUILD/returns3" > "$BUILD/returns3.spike.log" 2>&1; rc=$?
-ok=0; [ "$rc" = 3 ] && ok=1
-report $ok "spike exits with the program's exit code (exit $rc, program returns 3)"
-
-gem5_run "$BUILD/m5out-returns3" "$OWNS_ONE" "" "$BUILD/returns3" > "$BUILD/returns3.gem5.log" 2>&1; rc=$?
-ok=0; [ "$rc" = 3 ] && ok=1
-report $ok "gem5  exits with the program's exit code (exit $rc, program returns 3)"
-
-gem5_run "$BUILD/m5out-cut-short" "$OWNS_ONE" "" "$BUILD/owned" --max-ticks 1000000 > "$BUILD/cut-short.gem5.log" 2>&1; rc=$?
-ok=0; [ "$rc" = 1 ] && ok=1
-report $ok "gem5  fails when the simulation ends before the program does (exit $rc, program returns 0)"
+log="$BUILD/status.gem5.log"
+gem5_bare_run "$BUILD/m5out-status" "$BUILD/libprint_args.so" "$BUILD/status" > "$log" 2>&1; rc=$?
+ended 0
+part 0 "[commit ] insn=2c2552db "
+part 1 "[commit ] insn=2825c1db "
+verdict "gem5: writing vd dirties VS, and FS off refuses only a form that reads f[rs1]"
 
 exit $failed

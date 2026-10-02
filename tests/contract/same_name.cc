@@ -1,4 +1,4 @@
-// Test model, built twice (WHICH = 1 and 2): both libraries define a class with the same global name.
+// Test model, built twice (WHICH 1 and 2): both libraries define a class of the same global name.
 #include "vcix_accel.hpp"
 
 class Accel : public vcix_accel::Model {
