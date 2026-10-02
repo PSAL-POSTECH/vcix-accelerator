@@ -15,6 +15,7 @@ function(vcix_accel_add_model name source)
 endfunction()
 
 vcix_accel_add_model(print_args examples/print_args/print_args.cc)
+vcix_accel_add_model(tpu examples/tpu/tpu.cc)
 vcix_accel_add_model(pipelined tests/pipeline/pipelined.cc)
 vcix_accel_add_model(reports tests/contract/reports.cc)
 vcix_accel_add_model(timing tests/contract/timing.cc)
