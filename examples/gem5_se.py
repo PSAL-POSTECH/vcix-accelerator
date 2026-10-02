@@ -1,6 +1,6 @@
 # Test fixture for the example and the tests, not a machine description: gem5's default
-# MinorCPU pool plus one accelerator unit. Exits with the program's exit code, or 1.
-# Usage: gem5.opt gem5_se.py --model M.so [--config machine.yml] [--vlen BITS] [--max-ticks N] BINARY
+# MinorCPU pool plus the accelerator units. Exits with the program's exit code, or 1.
+# Usage: gem5.opt gem5_se.py --model M.so [--config machine.yml] [--units N] [--vlen BITS] [--max-ticks N] BINARY
 import argparse
 import sys
 
@@ -15,6 +15,7 @@ parser.add_argument("--model", required=True)
 parser.add_argument("--config", help="machine description (YAML) the model is configured from")
 parser.add_argument("--vlen", type=int, default=256)
 parser.add_argument("--max-ticks", type=int, help="stop the simulation after this many ticks")
+parser.add_argument("--units", type=int, default=1, help="accelerator units, each naming the model")
 args = parser.parse_args()
 
 
@@ -49,6 +50,7 @@ class ExampleFUPool(MinorFUPool):
             vcixConfigKeys=list(settings.keys()),
             vcixConfigValues=list(settings.values()),
         )
+        for _ in range(args.units)
     ]
 
 

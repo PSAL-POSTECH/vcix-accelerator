@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# The rules of the interface, one section each: ownership, the machine description,
-# the model table, processor state, and the harness the other tests stand on.
+# The rules of the interface, one section each: ownership, the machine description, the model
+# table, instances, processor state, and the harness the other tests stand on.
 # Usage: tests/contract/run.sh [build-dir [spike [pk [gem5.opt]]]]
 set -uo pipefail
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -19,7 +19,7 @@ report() {
 program() {
   rv_program "$HERE/$1.S" "$BUILD/$1" "${@:2}" || { echo "FAIL  $1.S does not build"; exit 2; }
 }
-for name in owned unowned nothing segfault returns3; do program $name; done
+for name in owned unowned nothing segfault returns3 pair; do program $name; done
 program status -nostdlib -Wl,-N,-Ttext=0x80000000,--no-warn-rwx-segments
 
 echo "-- ownership"
@@ -95,6 +95,12 @@ configured=$(grep -c '^\[config\]' "$BUILD/config-not_a_mapping.gem5.log")
 ok=0; [ "$rc" = 1 ] && [ "$configured" = 0 ] && ok=1
 report $ok "gem5 refuses not_a_mapping.yml (exit $rc, model configured with $configured values)"
 
+# refusal <simulator> <model.so> <model name> <reason>: the line the simulator stops with
+# when create fails; the reason may be only its beginning.
+refusal() {
+  if [ "$1" = spike ]; then echo "vcixaccel: $3: $4"; else echo "fatal: $2: $3: $4"; fi
+}
+
 # number <simulator> <key> <value> <exit-code> <what the model reads, or "" when the run must stop>
 number() {
   local sim=$1 key=$2 written=$3 rc=$4 want=$5 ok=0 got said
@@ -104,9 +110,9 @@ number() {
     [ "$rc" = 0 ] && grep -Fxq "[number] $key = $want" "$log" && ok=1
     report $ok "$sim $key: $written is $want (exit $rc)"
   else
-    said=$(grep -Fc "shows_config: machine description: $key: '$written' " "$log")
+    said=$(grep -Fc "$(refusal $sim "$SHOWS_CONFIG" shows_config "machine description: $key: '$written' ")" "$log")
     [ "$rc" = 1 ] && [ "$got" = 0 ] && [ "$said" = 1 ] && ok=1
-    report $ok "$sim $key: $written stops the run (exit $rc, reported $said, number handed on $got)"
+    report $ok "$sim $key: $written stops the run (exit $rc, $sim reported it $said of 1, number handed on $got)"
   fi
 }
 
@@ -147,7 +153,7 @@ probe() {
 }
 
 probe "an owned instruction, three times"      0 3 "$OWNS_ONE" $OWNED_INSN 3
-probe "a table with configure and reset NULL"  0 2 "$BUILD/libno_configure.so" $OWNED_INSN 2
+probe "a table written by hand, reset NULL"     0 2 "$BUILD/libno_reset.so" $OWNED_INSN 2
 probe "an instruction the model does not own"  1 0 "$OWNS_ONE" $UNOWNED_INSN 3
 probe "a model of another ABI version"         1 0 "$BUILD/libother_abi.so" $OWNED_INSN 3
 probe "instruction 'zz' is refused"            2 0 "$OWNS_ONE" zz 3
@@ -165,15 +171,65 @@ for sim in spike gem5; do
   report $ok "$sim: a model's own definition is the one it calls (exit $rc, own $own of 1, allocated $allocated times)"
 done
 
-# gem5 only: the Spike adapter does not check configure or the table yet.
-gem5_run "$BUILD/m5out-no_configure" "$BUILD/libno_configure.so" "" "$BUILD/owned" > "$BUILD/no_configure.gem5.log" 2>&1; rc=$?
-ok=0; [ "$rc" = 0 ] && ok=1
-report $ok "gem5 takes a table with configure and reset NULL (exit $rc)"
+# A table written by hand, with reset left NULL, runs on both.
+for sim in spike gem5; do
+  log="$BUILD/no_reset.$sim.log"
+  if [ $sim = spike ]; then spike_run "$BUILD/libno_reset.so" "" "$BUILD/owned" > "$log" 2>&1
+  else gem5_run "$BUILD/m5out-no_reset" "$BUILD/libno_reset.so" "" "$BUILD/owned" > "$log" 2>&1; fi; rc=$?
+  ok=0; [ "$rc" = 0 ] && ok=1
+  report $ok "$sim takes a table written by hand, reset NULL (exit $rc)"
+done
 
+# gem5 only: the Spike adapter does not check the table yet.
 gem5_run "$BUILD/m5out-null_table" "$BUILD/libnull_table.so" "" "$BUILD/owned" > "$BUILD/null_table.gem5.log" 2>&1; rc=$?
 said=$(grep -c 'fatal: .*libnull_table.so: vcix_accel_model() returned no table$' "$BUILD/null_table.gem5.log")
 ok=0; [ "$rc" = 1 ] && [ "$said" = 1 ] && ok=1
 report $ok "gem5 refuses a library that hands over no table (exit $rc, said so $said of 1)"
+
+echo "-- instances"
+REMEMBERS="$BUILD/libremembers.so"
+REFUSES="$BUILD/librefuses.so"
+
+# One library, two instances, no shared state; instances prints its own PASS/FAIL lines.
+"$BUILD/instances" "$REMEMBERS" "$REFUSES" > "$BUILD/instances.log" 2>&1 || failed=1
+grep -E '^(PASS|FAIL)  ' "$BUILD/instances.log"
+
+# seen <log> <entry> <commits>: remembers' reports of <entry> by an instance that had seen <commits>.
+seen() { grep -Fxc "[model] $2, commits seen $3" "$1"; }
+
+# Spike makes one instance per hart: with two harts, two are configured.
+spike_run "$REMEMBERS" "" "$BUILD/pair" -p2 > "$BUILD/harts.spike.log" 2>&1; rc=$?
+made=$(seen "$BUILD/harts.spike.log" configure 0)
+ok=0; [ "$rc" = 0 ] && [ "$made" = 2 ] && ok=1
+report $ok "spike with two harts makes two instances (exit $rc, configured $made of 2)"
+
+# gem5 makes one instance per unit. pair.S issues its second instruction while the first is
+# in flight, and remembers takes one at a time: the second goes to the second unit, if any.
+for units in 1 2; do
+  log="$BUILD/units-$units.gem5.log"
+  gem5_run "$BUILD/m5out-units-$units" "$REMEMBERS" "" "$BUILD/pair" --units $units > "$log" 2>&1; rc=$?
+  made=$(seen "$log" configure 0); first=$(seen "$log" commit 1); second=$(seen "$log" commit 2)
+  ok=0; [ "$rc" = 0 ] && [ "$made" = $units ] && [ "$first" = $units ] && [ "$second" = $((2 - units)) ] && ok=1
+  if [ $units = 1 ]; then report $ok "gem5 with one unit: its instance sees both commits (exit $rc, configured $made, first commits $first, second commits $second)"
+  else report $ok "gem5 with two units naming one library: each instance sees one commit (exit $rc, configured $made, first commits $first, second commits $second)"; fi
+done
+
+# A model that cannot be configured: the simulator says why and stops, and no face is called.
+REASON="this machine has no such unit"
+for sim in spike gem5 probe; do
+  log="$BUILD/refuses.$sim.log"
+  case $sim in
+    spike) spike_run "$REFUSES" "" "$BUILD/owned" > "$log" 2>&1; rc=$?
+           said=$(grep -Fxc "$(refusal spike "$REFUSES" refuses "$REASON")" "$log") ;;
+    gem5)  gem5_run "$BUILD/m5out-refuses" "$REFUSES" "" "$BUILD/owned" > "$log" 2>&1; rc=$?
+           said=$(grep -Fc "$(refusal gem5 "$REFUSES" refuses "$REASON")" "$log") ;;
+    probe) "$BUILD/timing_probe" "$REFUSES" $OWNED_INSN 3 > "$log" 2>&1; rc=$?
+           said=$(grep -Fxc "$REFUSES: refuses: $REASON" "$log") ;;
+  esac
+  called=$(grep -c '^\[model\]' "$log")
+  ok=0; [ "$rc" = 1 ] && [ "$said" = 1 ] && [ "$called" = 0 ] && ok=1
+  report $ok "$sim: a model that cannot be configured stops the run with its reason (exit $rc, reason given $said of 1, calls to the model $called)"
+done
 
 echo "-- processor state"
 

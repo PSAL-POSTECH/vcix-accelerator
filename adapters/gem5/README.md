@@ -17,17 +17,21 @@ the end of this page for what the other CPU models do.
 4. **Functional unit** — `MinorVcixAccelFU`, whose `vcixModel` parameter names
    the model `.so`. `vcixConfigKeys` / `vcixConfigValues` carry the machine
    description; the config script reads the YAML, so gem5 itself parses no
-   file. The model is loaded and configured when the CPU is built. A unit that
-   takes `VcixAccel` instructions without naming a model is rejected then, and
-   so is a library that hands over no table, a table of another ABI version,
-   or one without its timing functions.
+   file. Each unit gets its own instance of the model, made from that
+   description when the CPU is built and destroyed with it: two units naming
+   one library share no state. A unit that takes `VcixAccel` instructions
+   without naming a model is rejected then, and so is a library that hands
+   over no table, a table of another ABI version, or one without `create`,
+   `destroy` or its timing functions. A description the model refuses is
+   fatal too, with the model's name and its reason.
 5. **Issue** — `Execute::issue` asks the unit's model `can_accept`, in the same
    chain of conditions that keeps any instruction from issuing; a refusal
    leaves it waiting. An accepted instruction is asked its `latency` and then
    occupies no functional unit: it waits in the in-order queue until
    `issue cycle + latency`, as gem5's own unit-less instructions do. Both calls
-   are given the model's instructions in flight. An instruction no model owns
-   goes through unasked.
+   are given the unit's instructions in flight. When several units own an
+   instruction, it goes to the first in the pool that accepts it. An
+   instruction no model owns goes through unasked.
 6. **Commit** — in order, and not before that cycle. An instruction the model
    does not own becomes an illegal instruction here, on the same path as any
    other. Otherwise the instruction's own checks run first, through the

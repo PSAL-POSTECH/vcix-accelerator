@@ -4,8 +4,8 @@
 
 #include <charconv>
 #include <cstdio>
-#include <cstdlib>
 #include <cstring>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <system_error>
@@ -19,7 +19,7 @@ using Cycle = vcix_cycle_t;
 using Encoding = vcix_encoding;
 using Insn = vcix_insn;
 
-// The instructions issued to this model and not yet committed, oldest first.
+// The instructions issued to this instance and not yet committed, oldest first.
 class Pending {
  public:
   Pending(const vcix_pending *first, size_t count) : first_(first), count_(count) {}
@@ -42,7 +42,7 @@ inline uint32_t funct3(const Insn &insn) { return (insn.bits >> 12) & 0x7; }
 inline uint32_t group_size(const Insn &insn) { return insn.lmul_log2 > 0 ? 1u << insn.lmul_log2 : 1u; }
 
 // A value of the machine description the model cannot use. Thrown from
-// configure, it stops the run.
+// configure, it stops the run: the simulator reports the message.
 class ConfigError : public std::runtime_error {
  public:
   ConfigError(const std::string &key, const std::string &value, const std::string &why)
@@ -111,8 +111,9 @@ class Host {
   const vcix_host *h_;
 };
 
-// name() and owns() are asked once, before configure, so they cannot depend on
-// the machine description. The strings they return must outlive the library.
+// One object per instance: a hart on Spike, an accelerator unit on gem5. name() and owns()
+// are asked once, of an object made for that and then destroyed, so they cannot depend on
+// the machine description and the strings they return must not be that object's.
 class Model {
  public:
   virtual ~Model() = default;
@@ -129,27 +130,36 @@ class Model {
   virtual void reset() {}
 };
 
-// The table of model M, this library's alone. A ConfigError from configure ends
-// the process with a message: the C ABI's configure cannot report it.
+// The table of model M, this library's alone. create makes an M and configures it; an
+// exception from either becomes the error message, so none crosses the C boundary.
 template <class M>
 __attribute__((visibility("hidden"))) const vcix_model *export_model() {
-  static M model;
-  static const std::vector<Encoding> encodings = model.owns();
+  struct Description {
+    const char *name;
+    std::vector<Encoding> encodings;
+  };
+  static const Description description = [] {
+    M asked;
+    return Description{asked.name(), asked.owns()};
+  }();
   static const vcix_model table = {
       VCIX_ACCEL_ABI_VERSION,
-      model.name(),
-      &model,
-      encodings.data(),
-      encodings.size(),
-      [](void *s, const vcix_config *c) {
-        M *m = static_cast<M *>(s);
+      description.name,
+      description.encodings.data(),
+      description.encodings.size(),
+      [](const vcix_config *c, char *error, size_t error_size) -> void * {
         try {
+          std::unique_ptr<M> m(new M);
           m->configure(Config(c));
-        } catch (const ConfigError &e) {
-          std::fprintf(stderr, "%s: %s\n", m->name(), e.what());
-          std::exit(1);
+          return m.release();
+        } catch (const std::exception &e) {
+          std::snprintf(error, error_size, "%s", e.what());
+        } catch (...) {
+          std::snprintf(error, error_size, "an exception that is not a std::exception");
         }
+        return nullptr;
       },
+      [](void *s) { delete static_cast<M *>(s); },
       [](void *s, const vcix_host *h, const vcix_insn *i) { static_cast<M *>(s)->execute(Host(h), *i); },
       [](void *s, const vcix_insn *i, Cycle n, const vcix_pending *p, size_t c) -> int {
         return static_cast<M *>(s)->can_accept(*i, n, Pending(p, c));

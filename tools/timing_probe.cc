@@ -1,5 +1,5 @@
-// Drives the timing face without gem5: N copies of one instruction, one at a
-// time. Each is issued when the model accepts it and committed latency cycles later.
+// Drives the timing face of one instance without gem5: N copies of one instruction, one at
+// a time. Each is issued when the model accepts it and committed latency cycles later.
 #include <dlfcn.h>
 
 #include <charconv>
@@ -55,8 +55,8 @@ int main(int argc, char **argv) {
     fprintf(stderr, "%s has ABI %u, the probe has %u\n", argv[1], m->abi_version, VCIX_ACCEL_ABI_VERSION);
     return 1;
   }
-  if (!m->can_accept || !m->latency || !m->commit) {
-    fprintf(stderr, "%s leaves part of the timing face NULL\n", argv[1]);
+  if (!m->create || !m->destroy || !m->can_accept || !m->latency || !m->commit) {
+    fprintf(stderr, "%s leaves create, destroy or part of the timing face NULL\n", argv[1]);
     return 1;
   }
   if (!vcix_owner(m, bits)) {
@@ -65,19 +65,24 @@ int main(int argc, char **argv) {
   }
 
   vcix_config no_config = {nullptr, [](void *, const char *) -> const char * { return nullptr; }};
-  if (m->configure) m->configure(m->self, &no_config);
-  if (m->reset) m->reset(m->self);
+  char error[256] = "";
+  void *self = m->create(&no_config, error, sizeof error);
+  if (!self) {
+    fprintf(stderr, "%s: %s: %s\n", argv[1], m->name, error);
+    return 1;
+  }
 
   const vcix_insn decoded = {bits, 8, 32, lmul_log2};
   const vcix_insn *insn = &decoded;
 
   vcix_cycle_t now = 0;
   for (uint32_t i = 0; i < count; i++) {
-    while (!m->can_accept(m->self, insn, now, nullptr, 0)) now++;
-    vcix_cycle_t lat = m->latency(m->self, insn, now, nullptr, 0);
+    while (!m->can_accept(self, insn, now, nullptr, 0)) now++;
+    vcix_cycle_t lat = m->latency(self, insn, now, nullptr, 0);
     printf("insn %" PRIu32 ": issued at %" PRIu64 ", committed at %" PRIu64 "\n", i, now, now + lat);
     now += lat;
-    m->commit(m->self, insn, now);
+    m->commit(self, insn, now);
   }
+  m->destroy(self);
   return 0;
 }

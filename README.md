@@ -52,7 +52,8 @@ A model has two faces, and each simulator calls only its own:
 | Timing     | gem5      | `can_accept`, `latency`, `commit`     | whether the unit can take the instruction now, when its result is ready, and what the unit's state is afterwards |
 
 Stall and latency are delegated to the model. gem5 has one functional unit
-class for all of these instructions, and a unit of that class names the model.
+class for all of these instructions, and a unit of that class names the model
+and has its own instance of it.
 An accepted instruction does not occupy the unit, so the model keeps whatever
 internal structure it needs (several sub-units, queues, pipelines) and decides
 how many instructions overlap.
@@ -89,26 +90,31 @@ into one `.so`. It needs neither simulator's source tree.
 
 | Method | Called by | You say |
 |---|---|---|
-| `name()` | the wrapper | the model's name; it is printed when the machine description is refused, and neither adapter reads it |
+| `name()` | both | the model's name; a simulator prints it when the model cannot be configured |
 | `owns()` | both | the `{match, mask}` encodings that belong to this model |
 | `configure(config)` | both | nothing; read the machine's numbers by key (need not be overridden) |
 | `execute(host, insn)` | Spike | what the instruction does to registers and memory, through `host` |
 | `can_accept(insn, now, pending)` | gem5 | whether the unit can start this instruction in this cycle; must not change state |
 | `latency(insn, now, pending)` | gem5 | cycles until the result is ready; must not change state |
 | `commit(insn, now)` | gem5 | nothing; this is where the timing state changes, once per instruction that really ran |
-| `reset()` | both | return to the state right after `configure` (need not be overridden) |
+| `reset()` | Spike | return to the state right after `configure` (need not be overridden) |
 
 `insn` is the instruction bits together with the vector configuration it was
 decoded under: `vl`, SEW and LMUL. Both faces receive the same thing, so
 latency can depend on how much data the instruction moves.
 
-`configure` is called once, before any instruction reaches the model, but not
-before `name()` and `owns()`: those are asked when the library is loaded, and
-their answers are kept. A model's name and the encodings it owns therefore
-cannot depend on the machine description. The name, and the name in each
-encoding, must stay valid as long as the library is loaded; string literals do.
-What `config.get` returns is valid only until `configure` returns, so a model
-copies what it wants to keep.
+A simulator makes one object of the class for each instance of the accelerator:
+Spike one per hart, gem5 one per `MinorVcixAccelFU`. Instances share nothing,
+so a model's state belongs in the object's members; a static or a global is
+shared by every instance in the process.
+
+`configure` is called once on each object, before any instruction reaches it.
+`name()` and `owns()` are asked earlier, once, when the library is loaded, of
+an object that is then destroyed. A model's name and the encodings it owns
+therefore cannot depend on the machine description. The name, and the name in
+each encoding, must stay valid as long as the library is loaded; string
+literals do. What `config.get` returns is valid only until `configure` returns,
+so a model copies what it wants to keep.
 
 `config.get("key")` returns the value of a top-level key of the machine
 description, as written there, or nothing if the key is absent. "As written" is
@@ -125,10 +131,12 @@ is the machine description a setup already has.
 fallback is for an absent key only. A value that is present and is not such a
 number -- `abc`, `-1`, `1e3`, `7.9`, `0x10`, `8 cycles`, an empty string, a
 number too large for 64 bits, or one with a leading zero such as `010` -- is a
-configuration error: the run stops with the model's name, the key and the
-value on stderr and exit status 1. It is never read as 0 or replaced by the
-fallback. A model that reads a value itself reports a bad one the same way, by
-throwing `vcix_accel::ConfigError` from `configure`.
+configuration error: no instance is made, and the simulator stops with the
+model's name, the key and the value in its message and exit status 1. It is
+never read as 0 or replaced by the fallback. A model that reads a value itself
+reports a bad one the same way, by throwing `vcix_accel::ConfigError` from
+`configure`. Any other `std::exception` thrown there stops the run too, with
+its `what()` as the reason.
 
 `config.hex("key", fallback)` reads a value as a hexadecimal number, for the
 addresses a machine description holds: `0x` and then hex digits, within 64
@@ -152,8 +160,8 @@ is not its own any more:
   function instead, on Spike and on gem5.
 - A simulator can hold more than one model, and two libraries' visible symbols
   of the same name are merged: two models whose classes were both called
-  `Accel` used to answer with one table. The model object and its table are
-  now hidden whatever the flags.
+  `Accel` used to answer with one table. The table is now hidden whatever the
+  flags.
 
 The flag covers code compiled with it. A static library linked into the model
 that was not built hidden needs `-Wl,-Bsymbolic` on the model's link line as
@@ -167,7 +175,7 @@ the program, and it is the only place the model's state changes.
 
 An accepted instruction does not hold the unit. It is in flight from its issue
 until its commit, `latency` cycles later or when the instructions before it
-have committed, whichever is later. `pending` is the list of this model's
+have committed, whichever is later. `pending` is the list of this instance's
 instructions in flight, oldest first, each with the cycle it was issued and the
 cycle it will be ready; gem5 keeps the list and drops squashed instructions
 from it. So how many instructions overlap is the model's decision: a unit that
@@ -220,9 +228,9 @@ fixture, for the example and the tests: gem5's default pool plus the one unit.
   subclasses simulator types would have to be built against both simulator
   source trees. A plain C boundary keeps the model independent of both, and
   leaves room for models written in other languages. `include/vcix_accel.h` is
-  the contract for such a model and for an adapter: which members of the table
-  may be NULL, how long each string lives, and what the machine description
-  hands over.
+  the contract for such a model and for an adapter: how an instance is made
+  and what it says when it cannot be, which members of the table may be NULL,
+  how long each string lives, and what the machine description hands over.
 
 ## Non-goals
 
@@ -247,8 +255,8 @@ examples/gem5_se.py       the gem5 fixture the example and the tests run on
 tools/timing_probe.cc     drives a model's timing face without gem5
 tests/run.sh              every test below
 tests/contract/           the rules of the interface: ownership, the machine
-                          description, the model table, processor state, and
-                          the test harness
+                          description, the model table, instances, processor
+                          state, and the test harness
 tests/pipeline/           a pipelined model overlaps instructions on gem5
 tests/print_args/         the example reaches the model once per instruction
 setup/                    the pinned environment: versions.env, the scripts
@@ -333,12 +341,12 @@ the run scripts keep both command lines.
 
 ## Status
 
-- Interface: ABI version 5 (`VCIX_ACCEL_ABI_VERSION`); an adapter refuses a
+- Interface: ABI version 6 (`VCIX_ACCEL_ABI_VERSION`); an adapter refuses a
   model of another version. The gem5 branch carries a copy of
   `include/vcix_accel.h` (`src/cpu/minor/vcix_accel.h`) that must be kept
   identical to this one.
-- Spike adapter: working. It does not yet check `configure` or the table for
-  NULL, nor refuse a machine description that is not a mapping;
-  `tests/contract` runs those cases on gem5 only.
+- Spike adapter: working. It does not yet check the table for NULL, nor refuse
+  a machine description that is not a mapping; `tests/contract` runs those
+  cases on gem5 only.
 - gem5 adapter: working, on MinorCPU only; branch `vcix` of
   `PSAL-POSTECH/gem5`, on upstream gem5 25.1.0.1 (see `adapters/gem5/`).

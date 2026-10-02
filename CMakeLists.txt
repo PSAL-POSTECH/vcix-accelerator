@@ -20,6 +20,8 @@ vcix_accel_add_model(owns_one tests/contract/owns_one.cc)
 vcix_accel_add_model(pipelined tests/pipeline/pipelined.cc)
 vcix_accel_add_model(shows_config tests/contract/shows_config.cc)
 vcix_accel_add_model(own_symbols tests/contract/own_symbols.cc)
+vcix_accel_add_model(remembers tests/contract/remembers.cc)
+vcix_accel_add_model(refuses tests/contract/refuses.cc)
 
 # tests/contract: one source built twice under the same class name, hidden and not.
 foreach(which 1 2)
@@ -32,10 +34,14 @@ endforeach()
 add_executable(load_two tests/contract/load_two.cc)
 target_link_libraries(load_two PRIVATE vcix_accel ${CMAKE_DL_LIBS})
 
-# tests/contract: tables a caller must refuse, or take with members left NULL.
+# tests/contract: tables a caller must refuse, or take with reset left NULL.
 vcix_accel_add_model(other_abi tests/contract/other_abi.cc)
-vcix_accel_add_model(no_configure tests/contract/no_configure.cc)
+vcix_accel_add_model(no_reset tests/contract/no_reset.cc)
 vcix_accel_add_model(null_table tests/contract/null_table.cc)
+
+# tests/contract: instances of one library share no state.
+add_executable(instances tests/contract/instances.cc)
+target_link_libraries(instances PRIVATE vcix_accel ${CMAKE_DL_LIBS})
 
 add_executable(timing_probe tools/timing_probe.cc)
 target_link_libraries(timing_probe PRIVATE vcix_accel ${CMAKE_DL_LIBS})
