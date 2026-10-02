@@ -103,7 +103,7 @@ applied: `010` arrives as the text `010`. "Absent" covers a key the file does
 not have, a key whose value is YAML null (`k:`, `k: ~`, `k: null`) and a key
 whose value is not a scalar; `k: ""` is present, with empty text. The rule is
 stated once, at `vcix_config` in `include/vcix_accel.h`, and
-`tests/config` holds both simulators to it. The model never sees the file: the
+`tests/contract` holds both simulators to it. The model never sees the file: the
 adapters read it, and both simulators hand the model the same values. This
 repository defines no configuration format of its own; the file is the machine
 description a setup already has.
@@ -131,7 +131,7 @@ model, and symbols a library leaves visible can be merged with another
 library's symbols of the same name: two models whose classes were both called
 `Accel` used to answer with one table. The model object and its table are now
 hidden whatever the flags, but only the flag covers the model's own code.
-`tests/two_models` loads two such libraries and checks each gets its own.
+`tests/contract` loads two such libraries and checks each gets its own.
 
 `can_accept` and `latency` are asked when gem5 issues the instruction, and an
 issued instruction can be squashed and issued again, so they may be called more
@@ -214,13 +214,10 @@ examples/                 models, each with a program that exercises it,
                           and a gem5 fixture to run them
 tools/timing_probe.cc     drives a model's timing face without gem5
 tests/run.sh              every test below, on both simulators
-tests/ownership/          an unowned instruction is illegal on both simulators
+tests/contract/           the rules of the interface: ownership, the machine
+                          description, the model table, and the test harness
 tests/pipeline/           a pipelined model overlaps instructions on gem5
-tests/two_models/         two model libraries in one process do not share a table
-tests/probe/              the probe checks the table and its own arguments
 tests/print_args/         the example reaches the model once per instruction
-tests/config/             both simulators hand a model the same machine description
-tests/harness/            the run scripts themselves: a build that fails, fails
 setup/                    the pinned environment: versions.env, the scripts
                           that build it, and the image
 scripts/                  build this repository; how each simulator is started

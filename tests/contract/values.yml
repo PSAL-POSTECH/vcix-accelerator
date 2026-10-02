@@ -1,5 +1,5 @@
 # One key for each way a value can be written. shows_config asks for all of
-# them and for one key that is not here; expected.txt is what it must be given.
+# them and for one key that is not here; values.expected is what it must be given.
 plain: 8
 quoted: "8"
 empty:

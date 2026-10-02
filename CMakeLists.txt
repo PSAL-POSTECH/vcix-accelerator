@@ -16,24 +16,24 @@ function(vcix_accel_add_model name source)
 endfunction()
 
 vcix_accel_add_model(print_args examples/print_args/print_args.cc)
-vcix_accel_add_model(owns_one tests/ownership/owns_one.cc)
+vcix_accel_add_model(owns_one tests/contract/owns_one.cc)
 vcix_accel_add_model(pipelined tests/pipeline/pipelined.cc)
-vcix_accel_add_model(shows_config tests/config/shows_config.cc)
+vcix_accel_add_model(shows_config tests/contract/shows_config.cc)
 
-# tests/two_models: one source built twice under the same class name, hidden and not.
+# tests/contract: one source built twice under the same class name, hidden and not.
 foreach(which 1 2)
-  vcix_accel_add_model(same_name_${which} tests/two_models/same_name.cc)
+  vcix_accel_add_model(same_name_${which} tests/contract/same_name.cc)
   target_compile_definitions(same_name_${which} PRIVATE WHICH=${which})
-  vcix_accel_add_model(same_name_default_${which} tests/two_models/same_name.cc)
+  vcix_accel_add_model(same_name_default_${which} tests/contract/same_name.cc)
   target_compile_definitions(same_name_default_${which} PRIVATE WHICH=${which})
   set_target_properties(same_name_default_${which} PROPERTIES CXX_VISIBILITY_PRESET default VISIBILITY_INLINES_HIDDEN OFF)
 endforeach()
-add_executable(load_two tests/two_models/load_two.cc)
+add_executable(load_two tests/contract/load_two.cc)
 target_link_libraries(load_two PRIVATE vcix_accel ${CMAKE_DL_LIBS})
 
-# tests/probe: tables the probe must refuse, or take with members left NULL.
-vcix_accel_add_model(other_abi tests/probe/other_abi.cc)
-vcix_accel_add_model(no_configure tests/probe/no_configure.cc)
+# tests/contract: tables a caller must refuse, or take with members left NULL.
+vcix_accel_add_model(other_abi tests/contract/other_abi.cc)
+vcix_accel_add_model(no_configure tests/contract/no_configure.cc)
 
 add_executable(timing_probe tools/timing_probe.cc)
 target_link_libraries(timing_probe PRIVATE vcix_accel ${CMAKE_DL_LIBS})
