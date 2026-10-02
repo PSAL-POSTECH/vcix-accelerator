@@ -1,55 +1,35 @@
-// Example: the timing face of a TPU's units behind the two custom opcodes, as one model made of unit classes; each call goes to the unit that owns the instruction.
+// Example: the timing of a TPU's units as one model; each call goes to the unit that owns the instruction.
 #include <cinttypes>
 #include <cstdio>
 #include <deque>
-#include <iterator>
+#include <vector>
 
 #include "vcix_accel.hpp"
 
 #include "misc.hpp"
 #include "sfu.hpp"
-// SYSTOLIC: #include "systolic.hpp"
+#include "systolic.hpp"
 
 namespace {
 
 using namespace vcix_accel;
 
-// Opcode, funct3, and funct6 with vm (funct7 on custom-1); FUNCTION_FIELD adds the field at 19:15.
-constexpr uint32_t FUNCTION = 0xFE00707F;
-constexpr uint32_t FUNCTION_FIELD = 0xFE0FF07F;
-
-// What the model owns: tpu::Sfu's sf.vc.v.iv, then tpu::Misc's on custom-2 (the lane number, the systolic array's compute, the cross-lane unit) and on custom-1 (the DMA).
-constexpr Encoding ENCODINGS[] = {
-    {0x2000305B, FUNCTION, "verf"},
-    {0x2400305B, FUNCTION, "vtanh"},
-    {0x2800305B, FUNCTION_FIELD, "vsin"},
-    {0x2800B05B, FUNCTION_FIELD, "vcos"},
-    {0x2801305B, FUNCTION_FIELD, "vlog"},
-    {0x2801B05B, FUNCTION_FIELD, "vatan"},
-    {0x2C00305B, FUNCTION, "vexp"},
-    {0x0000305B, FUNCTION, "vlane_idx"},
-    {0x0600305B, FUNCTION, "compute"},
-    {0x2E00305B, FUNCTION, "xlu_push"},
-    {0xAE00305B, FUNCTION, "xlu_push_pattern"},
-    {0x0400305B, FUNCTION, "xlu_pop"},
-    {0x0200302B, FUNCTION, "mvin2"},
-    {0x0400302B, FUNCTION, "mvin"},
-    {0x0600302B, FUNCTION, "mvout"},
-    {0x0E00302B, FUNCTION, "dma_config_desc"},
-    {0x1C00302B, FUNCTION, "mvin3"},
-};
-
-// SYSTOLIC: tpu::Systolic becomes a member, with a line in configure, can_accept, issue, commit, tick and reset.
 class Tpu : public Model {
  public:
   const char *name() const override { return "tpu"; }
-  // SYSTOLIC: tpu::Systolic::encodings() is appended here.
-  std::vector<Encoding> owns() const override { return {std::begin(ENCODINGS), std::end(ENCODINGS)}; }
+  std::vector<Encoding> owns() const override {
+    std::vector<Encoding> all;
+    for (const std::vector<Encoding> &unit :
+         {tpu::Sfu::encodings(), tpu::Misc::encodings(), tpu::Systolic::encodings()})
+      all.insert(all.end(), unit.begin(), unit.end());
+    return all;
+  }
 
   void configure(const Config &config) override {
     trace_ = config.uint("tpu_trace", 0) != 0;
     sfu_.configure(config);
     misc_.configure(config);
+    systolic_.configure(config);
   }
 
   // The functional face is written elsewhere.
@@ -58,26 +38,31 @@ class Tpu : public Model {
   bool can_accept(const Insn &insn, Cycle now) const override {
     if (sfu_.owns(insn)) return sfu_.can_accept(insn, now);
     if (misc_.owns(insn)) return misc_.can_accept(insn, now);
+    if (systolic_.owns(insn)) return systolic_.can_accept(insn, now);
     return false;
   }
   Cycle issue(const Insn &insn, Id id, Cycle now) override {
     if (trace_) trace_issue(insn, now);
     if (sfu_.owns(insn)) return sfu_.issue(insn, id, now);
     if (misc_.owns(insn)) return misc_.issue(insn, id, now);
+    if (systolic_.owns(insn)) return systolic_.issue(insn, id, now);
     return 1;
   }
   void commit(const Insn &insn, Id id, Cycle now) override {
     if (trace_) trace_commit(insn, now);
     if (sfu_.owns(insn)) sfu_.commit(insn, id, now);
     if (misc_.owns(insn)) misc_.commit(insn, id, now);
+    if (systolic_.owns(insn)) systolic_.commit(insn, id, now);
   }
   void tick(Cycle now) override {
     sfu_.tick(now);
     misc_.tick(now);
+    systolic_.tick(now);
   }
   void reset() override {
     sfu_.reset();
     misc_.reset();
+    systolic_.reset();
     issued_any_ = false;
     last_issue_ = 0;
     in_flight_.clear();
@@ -90,11 +75,14 @@ class Tpu : public Model {
     return "?";
   }
   void trace_issue(const Insn &insn, Cycle now) {
+    printf("[tpu] issue %s: ", name_of(insn));
     if (issued_any_)
-      printf("[tpu] issue %s: %" PRIu64 " cycles after the last issue, %zu in flight\n", name_of(insn),
-             now - last_issue_, in_flight_.size());
+      printf("%" PRIu64 " cycles after the last issue, %zu in flight", now - last_issue_, in_flight_.size());
     else
-      printf("[tpu] issue %s: the first\n", name_of(insn));
+      printf("the first");
+    if (systolic_.owns(insn))
+      printf(", input queue %u, output queue %u", systolic_.input_entries(), systolic_.output_entries());
+    printf("\n");
     fflush(stdout);
     issued_any_ = true;
     last_issue_ = now;
@@ -110,6 +98,7 @@ class Tpu : public Model {
 
   tpu::Sfu sfu_;
   tpu::Misc misc_;
+  tpu::Systolic systolic_;
 
   bool trace_ = false;
   // Kept only under trace_; no answer to the simulator reads them.

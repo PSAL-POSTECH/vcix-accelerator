@@ -1,0 +1,4 @@
+# The tpu model reports each issue and commit; a 4 x 4 array with queues of 8.
+tpu_trace: 1
+vpu_num_lanes: 4
+tpu_systolic_queue_entries: 8
