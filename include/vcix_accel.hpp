@@ -173,12 +173,26 @@ __attribute__((visibility("hidden"))) const vcix_model *export_model() {
   return &table;
 }
 
+// export_model, or NULL with the reason on stderr when M cannot be made to be asked its
+// name and encodings: an exception from M's constructor does not cross the C boundary.
+template <class M>
+__attribute__((visibility("hidden"))) const vcix_model *export_model_or_null() {
+  try {
+    return export_model<M>();
+  } catch (const std::exception &e) {
+    std::fprintf(stderr, "vcix_accel: the model cannot be made: %s\n", e.what());
+  } catch (...) {
+    std::fprintf(stderr, "vcix_accel: the model cannot be made: an exception that is not a std::exception\n");
+  }
+  return nullptr;
+}
+
 }  // namespace vcix_accel
 
 // Defines the one symbol a model library exports, with default visibility.
 #define VCIX_ACCEL_REGISTER(ModelClass)                                                    \
   extern "C" __attribute__((visibility("default"))) const vcix_model *vcix_accel_model(void) { \
-    return vcix_accel::export_model<ModelClass>();                                         \
+    return vcix_accel::export_model_or_null<ModelClass>();                                 \
   }
 
 #endif

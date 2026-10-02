@@ -137,6 +137,8 @@ never read as 0 or replaced by the fallback. A model that reads a value itself
 reports a bad one the same way, by throwing `vcix_accel::ConfigError` from
 `configure`. Any other `std::exception` thrown there stops the run too, with
 its `what()` as the reason.
+An exception from the model's constructor is caught as well: the library
+writes the reason to stderr and hands over no table.
 
 `config.hex("key", fallback)` reads a value as a hexadecimal number, for the
 addresses a machine description holds: `0x` and then hex digits, within 64

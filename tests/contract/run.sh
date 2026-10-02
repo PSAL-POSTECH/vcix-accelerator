@@ -186,6 +186,13 @@ said=$(grep -c 'fatal: .*libnull_table.so: vcix_accel_model() returned no table$
 ok=0; [ "$rc" = 1 ] && [ "$said" = 1 ] && ok=1
 report $ok "gem5 refuses a library that hands over no table (exit $rc, said so $said of 1)"
 
+# A model whose constructor throws hands over no table and says why; nothing is terminated.
+gem5_run "$BUILD/m5out-cannot_be_made" "$BUILD/libcannot_be_made.so" "" "$BUILD/owned" > "$BUILD/cannot_be_made.gem5.log" 2>&1; rc=$?
+said=$(grep -c 'fatal: .*libcannot_be_made.so: vcix_accel_model() returned no table$' "$BUILD/cannot_be_made.gem5.log")
+why=$(grep -Fxc 'vcix_accel: the model cannot be made: no such unit can be built' "$BUILD/cannot_be_made.gem5.log")
+ok=0; [ "$rc" = 1 ] && [ "$said" = 1 ] && [ "$why" = 1 ] && ok=1
+report $ok "gem5 refuses a model whose constructor throws (exit $rc, said so $said of 1, reason given $why of 1)"
+
 echo "-- instances"
 REMEMBERS="$BUILD/libremembers.so"
 REFUSES="$BUILD/librefuses.so"
