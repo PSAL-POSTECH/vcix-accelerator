@@ -50,6 +50,13 @@ else about the machine changes. The model is the same `.so` the Spike adapter
 loads. A config with no such unit cannot run these instructions at all, as with
 any OpClass that has no functional unit.
 
+A model is loaded with `dlopen(RTLD_NOW | RTLD_LOCAL)`. gem5 exports its own
+symbols, so a model's visible definition of a name gem5 also defines loses to
+gem5's; build the model hidden (see the top-level README). `RTLD_DEEPBIND`
+would let the model's definition win, and was tried and dropped: gem5 runs on
+tcmalloc, and a deep-bound model frees with glibc what libc allocated with
+tcmalloc (`strdup`, `asprintf`) and crashes in `std::cout`.
+
 Limits: only MinorCPU asks the model; on other CPU models a VCIX instruction
 does nothing. `cpu/minor/execute.cc` includes RISC-V headers for the fault, so
 the branch is not ISA-neutral.

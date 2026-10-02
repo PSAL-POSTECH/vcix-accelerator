@@ -19,6 +19,7 @@ vcix_accel_add_model(print_args examples/print_args/print_args.cc)
 vcix_accel_add_model(owns_one tests/contract/owns_one.cc)
 vcix_accel_add_model(pipelined tests/pipeline/pipelined.cc)
 vcix_accel_add_model(shows_config tests/contract/shows_config.cc)
+vcix_accel_add_model(own_symbols tests/contract/own_symbols.cc)
 
 # tests/contract: one source built twice under the same class name, hidden and not.
 foreach(which 1 2)

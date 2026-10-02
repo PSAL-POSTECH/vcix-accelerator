@@ -151,6 +151,17 @@ probe "instruction 'zz' is refused"            2 0 "$OWNS_ONE" zz 3
 probe "count 'abc' is refused"                 2 0 "$OWNS_ONE" $OWNED_INSN abc
 probe "lmul-log2 '40' is refused"              2 0 "$OWNS_ONE" $OWNED_INSN 3 40
 
+# A model built hidden, as CMake builds one, calls its own f16_to_f32 and not the
+# simulator's, and its allocations survive the simulator's allocator.
+for sim in spike gem5; do
+  log="$BUILD/own_symbols.$sim.log"
+  if [ $sim = spike ]; then spike_run "$BUILD/libown_symbols.so" "" "$BUILD/owned" > "$log" 2>&1
+  else gem5_run "$BUILD/m5out-own_symbols" "$BUILD/libown_symbols.so" "" "$BUILD/owned" > "$log" 2>&1; fi; rc=$?
+  own=$(grep -Fxc '[model] f16_to_f32(0x3c00) = 0x0badc0de' "$log"); allocated=$(grep -c '^\[model\] allocated, ' "$log")
+  ok=0; [ "$rc" = 0 ] && [ "$own" = 1 ] && [ "$allocated" -ge 2 ] && ok=1
+  report $ok "$sim: a model's own definition is the one it calls (exit $rc, own $own of 1, allocated $allocated times)"
+done
+
 # gem5 only: the Spike adapter does not check configure or the table yet.
 gem5_run "$BUILD/m5out-no_configure" "$BUILD/libno_configure.so" "" "$BUILD/owned" > "$BUILD/no_configure.gem5.log" 2>&1; rc=$?
 ok=0; [ "$rc" = 0 ] && ok=1

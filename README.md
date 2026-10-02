@@ -126,12 +126,21 @@ VCIX_ACCEL_REGISTER(YourModel)
 Build the library with hidden visibility (`-fvisibility=hidden
 -fvisibility-inlines-hidden`; in CMake, `CXX_VISIBILITY_PRESET hidden`). The
 macro exports the one symbol a simulator looks up, `vcix_accel_model`, by
-itself, so nothing else has to be marked. A simulator can hold more than one
-model, and symbols a library leaves visible can be merged with another
-library's symbols of the same name: two models whose classes were both called
-`Accel` used to answer with one table. The model object and its table are now
-hidden whatever the flags, but only the flag covers the model's own code.
-`tests/contract` loads two such libraries and checks each gets its own.
+itself, so nothing else has to be marked. A symbol the library leaves visible
+is not its own any more:
+
+- Both simulators export their symbols, and theirs win. A model that defined
+  `f16_to_f32` with default visibility called the simulator's softfloat
+  function instead, on Spike and on gem5.
+- A simulator can hold more than one model, and two libraries' visible symbols
+  of the same name are merged: two models whose classes were both called
+  `Accel` used to answer with one table. The model object and its table are
+  now hidden whatever the flags.
+
+The flag covers code compiled with it. A static library linked into the model
+that was not built hidden needs `-Wl,-Bsymbolic` on the model's link line as
+well. `tests/contract` checks that two same-named models each get their own
+table and that a hidden model calls its own `f16_to_f32`.
 
 `can_accept` and `latency` are asked when gem5 issues the instruction, and an
 issued instruction can be squashed and issued again, so they may be called more
