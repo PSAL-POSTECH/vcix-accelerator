@@ -80,6 +80,42 @@ same cross from-old-spike.sha256 "the cross-lane unit: each of its 24 operations
 same msa from-old-spike.sha256 "the multi-precision array: singles, halves and both floats of 8 bits to a word, every width, pops at every element width" -- msa
 same dma from-old-spike.sha256 "the DMA: 300 descriptors, an mvin and an mvout each, and the indices of the indirect ones" --base-path -- dma 0 300
 
+# The same cases, each named by dma_index_key: the data moves as before, and every indirect transfer writes
+# indirect_index_<case>_<n>.raw, n from 0 within the case, none of them the unkeyed name, each a uint64 per
+# position of the tensor, and per position the old index times the descriptor's indirect_stride.
+keyed() {
+  local base="$OUT/dma-keyed.base" rc; rm -rf "$base" && mkdir -p "$base/indirect_access"
+  on_model dma-keyed "--base-path=$base" -- dma 0 300 keyed; rc=$?
+  local why
+  why=$(python3 - "$base/indirect_access" "$OUT/dma.base/indirect_access" "$OUT/dma.out" "$OUT/dma-keyed.out" <<'EOF'
+import os, struct, sys
+keyed, plain, out, keyed_out = sys.argv[1:]
+if open(out, "rb").read() != open(keyed_out, "rb").read():
+    sys.exit("the key changed what the transfers did")
+names = sorted(os.listdir(keyed))
+if not names or any(not n.startswith("indirect_index_") for n in names):
+    sys.exit(f"{len(names)} file(s), some not keyed: {names[:3]}")
+plain_n = len(os.listdir(plain))
+if len(names) != plain_n:
+    sys.exit(f"{len(names)} keyed dumps for {plain_n} indirect transfers")
+order = sorted(names, key=lambda n: tuple(int(f) for f in n[len("indirect_index_"):-4].split("_")))
+for i, name in enumerate(order):
+    def words(path):
+        b = open(path, "rb").read()
+        return struct.unpack(f"<{len(b) // 8}q", b)
+    got, was = words(os.path.join(keyed, name)), words(os.path.join(plain, f"indirect_index{i}.raw"))
+    if len(got) < len(was):
+        sys.exit(f"{name}: {len(got)} positions, the plain dump {len(was)}")
+    ratios = {g // w for g, w in zip(got, was) if w}
+    if len(ratios) > 1 or not ratios <= {1, 2, 3} or any(g and not w for g, w in zip(got, was)):
+        sys.exit(f"{name}: not index x one stride of 1..3 per position: {sorted(ratios)[:4]}")
+EOF
+)
+  if [ "$rc" = 0 ] && [ -z "$why" ]; then printf 'PASS'; else printf 'FAIL'; failed=1; fi
+  echo "  the DMA under dma_index_key: one keyed dump per indirect transfer, the data unchanged (exit $rc)${why:+: $why}"
+}
+keyed
+
 # refused <which> <exit> <text>: the run ends there, with this on standard error.
 refused() {
   local rc

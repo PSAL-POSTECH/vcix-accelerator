@@ -129,14 +129,14 @@ echo "-- one-cycle instructions"
 on_gem5 one_cycle one_cycle "$HERE/trace.yml"
 
 one_cycle=()
-for name in vlane_idx compute dma_config_desc mvin mvin2 mvin3 mvout; do
+for name in vlane_idx compute dma_config_desc dma_index_key mvin mvin2 mvin3 mvout; do
   one_cycle+=("commit $name: 1 cycles after its issue")
 done
 drained=$(times one_cycle \
   "issue systolic weight push: 10 cycles after the last issue, 0 in flight, input queue 0, output queue 0")
 commits="$(said one_cycle "${one_cycle[@]}") of $(lines one_cycle commit)"
 report "exit ${rc[one_cycle]}, behind an empty model $drained, commits $commits" \
-  "exit 0, behind an empty model 1, commits 7 of 9" \
+  "exit 0, behind an empty model 1, commits 8 of 10" \
   "gem5 takes each custom-2 and DMA instruction of tpu::Misc and commits it one cycle after its issue"
 
 echo "-- the model"

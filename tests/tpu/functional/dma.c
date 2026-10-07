@@ -136,12 +136,16 @@ static void one(unsigned number) {
   emit(memory, sizeof memory);
 }
 
+// With `keyed`, each case first names itself with dma_index_key, so its indices go under its own number.
 int main(int argc, char **argv) {
-  if (argc != 3) {
-    puts("usage: dma <first case> <cases>");
+  if (argc != 3 && !(argc == 4 && strcmp(argv[3], "keyed") == 0)) {
+    puts("usage: dma <first case> <cases> [keyed]");
     return 1;
   }
   const unsigned first = (unsigned)strtoul(argv[1], 0, 10), cases = (unsigned)strtoul(argv[2], 0, 10);
-  for (unsigned number = first; number < first + cases; number++) one(number);
+  for (unsigned number = first; number < first + cases; number++) {
+    if (argc == 4) DMA(8, (uint64_t)number, 0);
+    one(number);
+  }
   return 0;
 }
