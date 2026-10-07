@@ -47,7 +47,7 @@ class Misc {
   };
   static constexpr const char *WIDTH_KEY = "tpu_misc_issue_width";
 
-  vcix_accel::Port issue_{"misc", "issue", "instructions", 2, vcix_accel::Port::PRIMARY};
+  vcix_accel::Port issue_{"Misc", "issue", "instructions", 2, vcix_accel::Port::PRIMARY};
 };
 
 }  // namespace tpu

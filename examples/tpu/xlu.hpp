@@ -72,8 +72,8 @@ class Xlu {
   static bool is(const Insn &insn, uint32_t match) { return (insn.bits & FORM) == match; }
   static bool is_push(const Insn &insn) { return is(insn, PUSH) || is(insn, PUSH_PATTERN); }
 
-  Stream stream_{"xlu", "input", "elements", vcix_accel::Port::PRIMARY, DEFAULT_LATENCY, DEFAULT_ENTRIES};
-  vcix_accel::Port issue_{"xlu", "issue", "instructions", 1};
+  Stream stream_{"Xlu", "input", "elements", vcix_accel::Port::PRIMARY, DEFAULT_LATENCY, DEFAULT_ENTRIES};
+  vcix_accel::Port issue_{"Xlu", "issue", "instructions", 1};
 };
 
 }  // namespace tpu
