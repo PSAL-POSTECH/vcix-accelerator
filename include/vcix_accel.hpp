@@ -398,15 +398,14 @@ class Instance {
     strings_.clear();
     const std::vector<const Port *> ports = model.ports();
     num_ports_ = ports.size();
-    for (const Port *port : ports) {
+    for (size_t i = 0; i < ports.size(); i++) {
+      const Port *port = ports[i];
       if (std::strcmp(port->unit(), "committed") == 0)
         throw std::invalid_argument("a port's unit is named 'committed', the name of the commit counts");
       size_t primaries = 0;
-      for (const Port *other : ports) {
-        if (other == port) continue;
-        if (!std::strcmp(other->unit(), port->unit()) && !std::strcmp(other->name(), port->name()))
+      for (size_t j = 0; j < ports.size(); j++)
+        if (j != i && !std::strcmp(ports[j]->unit(), port->unit()) && !std::strcmp(ports[j]->name(), port->name()))
           throw std::invalid_argument(std::string("two ports are named ") + port->unit() + "." + port->name());
-      }
       for (const Port *other : ports) primaries += !std::strcmp(other->unit(), port->unit()) && other->primary();
       if (primaries != 1)
         throw std::invalid_argument(std::string("unit ") + port->unit() + " has " + std::to_string(primaries) +

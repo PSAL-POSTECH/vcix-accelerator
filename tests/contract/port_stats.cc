@@ -24,7 +24,7 @@ void expect(bool ok, const std::string &what) {
   if (!ok) failed = 1;
 }
 
-enum Variant { GOOD, NO_PRIMARY, TWO_PRIMARIES, SAME_NAME, NAMED_COMMITTED };
+enum Variant { GOOD, NO_PRIMARY, TWO_PRIMARIES, SAME_NAME, NAMED_COMMITTED, LISTED_TWICE };
 enum Form { OP, PUSH, POP };
 constexpr uint32_t FORM_MASK = 0xF000007F;
 
@@ -60,7 +60,10 @@ class Toy : public Model {
     lanes_.reset();
     array_.reset();
   }
-  std::vector<const Port *> ports() const override { return {&issue_, &lanes_, &array_.entry()}; }
+  std::vector<const Port *> ports() const override {
+    if (V == LISTED_TWICE) return {&issue_, &lanes_, &array_.entry(), &lanes_};
+    return {&issue_, &lanes_, &array_.entry()};
+  }
 
  private:
   Port issue_{V == NAMED_COMMITTED ? "committed" : "pipe", "issue", "instructions", 2,
@@ -212,9 +215,11 @@ void the_list() {
   expect(refused(export_model<Toy<NO_PRIMARY>>(), "unit pipe has 0 primary ports, not one") &&
              refused(export_model<Toy<TWO_PRIMARIES>>(), "unit pipe has 2 primary ports, not one") &&
              refused(export_model<Toy<SAME_NAME>>(), "two ports are named pipe.issue") &&
+             refused(export_model<Toy<LISTED_TWICE>>(), "two ports are named pipe.lanes") &&
              refused(export_model<Toy<NAMED_COMMITTED>>(),
                      "a port's unit is named 'committed', the name of the commit counts"),
-         "create refuses a unit without one primary port, two ports of one name, and a unit named committed");
+         "create refuses a unit without one primary port, two ports of one name, one port listed twice, and a unit named "
+         "committed");
 }
 
 void within_capacity() {
