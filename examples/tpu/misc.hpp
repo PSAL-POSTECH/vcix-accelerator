@@ -1,4 +1,4 @@
-// The tpu model's instructions with no timing of their own: one cycle each.
+// The tpu model's instructions with no timing of their own: one cycle each, tpu_misc_issue_width of them a cycle.
 #ifndef TPU_MISC_HPP
 #define TPU_MISC_HPP
 
@@ -17,12 +17,21 @@ class Misc {
       if ((insn.bits & e.mask) == e.match) return true;
     return false;
   }
-  void configure(const vcix_accel::Config &) {}
-  bool can_accept(const vcix_accel::Insn &, vcix_accel::Cycle) const { return true; }
-  vcix_accel::Cycle issue(const vcix_accel::Insn &, vcix_accel::Id, vcix_accel::Cycle) { return 1; }
+  void configure(const vcix_accel::Config &config) {
+    const uint64_t width = config.uint(WIDTH_KEY, 2);
+    if (width == 0) throw vcix_accel::ConfigError(WIDTH_KEY, "0", "is not an issue width: at least 1");
+    issue_.set_capacity(width);
+  }
+  bool can_accept(const vcix_accel::Insn &, vcix_accel::Cycle now) const { return issue_.room(now) != 0; }
+  vcix_accel::Cycle issue(const vcix_accel::Insn &, vcix_accel::Id, vcix_accel::Cycle now) {
+    issue_.admit(1, now);
+    return 1;
+  }
   void commit(const vcix_accel::Insn &, vcix_accel::Id, vcix_accel::Cycle) {}
   void tick(vcix_accel::Cycle) {}
-  void reset() {}
+  void reset() { issue_.reset(); }
+
+  std::vector<const vcix_accel::Port *> ports() const { return {&issue_}; }
 
  private:
   // custom-2: lane number, compute. custom-1: DMA.
@@ -36,6 +45,9 @@ class Misc {
       {0x0E00302B, FUNCTION, "dma_config_desc"},
       {0x1C00302B, FUNCTION, "mvin3"},
   };
+  static constexpr const char *WIDTH_KEY = "tpu_misc_issue_width";
+
+  vcix_accel::Port issue_{"misc", "issue", "instructions", 2, vcix_accel::Port::PRIMARY};
 };
 
 }  // namespace tpu

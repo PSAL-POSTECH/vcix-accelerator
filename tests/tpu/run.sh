@@ -37,7 +37,7 @@ printf 'tpu_sfu_latency_cycles: 0\n' > "$BUILD/tpu-latency-0.yml"
 echo "-- the units' ports, with no simulator"
 "$BUILD/tpu_ports" "$BUILD/libtpu.so" > "$BUILD/tpu-ports.log" 2>&1
 rc[ports]=$?
-report "exit ${rc[ports]}, $(grep -c '^PASS' "$BUILD/tpu-ports.log") passed" "exit 0, 8 passed" \
+report "exit ${rc[ports]}, $(grep -c '^PASS' "$BUILD/tpu-ports.log") passed" "exit 0, 9 passed" \
   "tpu_ports: each unit's ports count what the cases worked out by hand say (tpu-ports.log)"
 
 echo "-- special-function unit"
@@ -157,5 +157,45 @@ timeout 300 "$GEM5" -d "$BUILD/m5out-tpu-machine" "$REPO/examples/tpu/gem5/scrip
 rc[machine]=$?
 report "exit ${rc[machine]}, $(chain machine 10)" "exit 0, readers 6, commits 6 and 11" \
   "script_systolic.py runs sfu.S to the program's exit, the reader of a special function's result issued 10 cycles after it"
+
+
+# machine_stat <run> <name>: the value of the stat ending in .<name> in the run's one dump
+machine_stat() { awk -v want=".$2" 'substr($1, length($1) - length(want) + 1) == want { print $2; exit }' "$BUILD/m5out-tpu-$1/stats.txt"; }
+
+# misc_per_cycle <run>: the most tpu::Misc instructions issued in one cycle, and how many it issued, from the trace
+misc_per_cycle() {
+  awk '/^\[tpu\] issue / { split($0, part, ": "); name = substr(part[1], 13); split(part[2], after, " ")
+      if (after[1] == "the") at = 0; else at += after[1]
+      if (name ~ /^(vlane_idx|compute|dma_config_desc|mvin|mvin2|mvin3|mvout)$/) { n[at]++; all++ } }
+    END { for (c in n) if (n[c] > most) most = n[c]; print most + 0, all + 0 }' "$BUILD/tpu-$1.gem5.log"
+}
+
+timeout 300 "$GEM5" -d "$BUILD/m5out-tpu-machine-misc" "$REPO/examples/tpu/gem5/script_systolic.py" \
+  -c "$BUILD/tpu-one_cycle" --model "$BUILD/libtpu.so" --machine-config "$HERE/trace.yml" \
+  > "$BUILD/tpu-machine-misc.gem5.log" 2>&1
+rc[machine-misc]=$?
+committed=0
+for name in vlane_idx compute dma_config_desc mvin mvin2 mvin3 mvout; do
+  committed=$((committed + $(machine_stat machine-misc "committed.$name")))
+done
+report "exit ${rc[machine-misc]}, at most and in all $(misc_per_cycle machine-misc)" "exit 0, at most and in all 2 7" \
+  "script_systolic.py issues one_cycle.S's seven tpu::Misc instructions at most two a cycle, though the CPU issues 12"
+report "primary $(machine_stat machine-misc misc.issue.primary), capacity $(machine_stat machine-misc misc.issue.capacity), admitted $(machine_stat machine-misc misc.issue.admitted) of $committed committed" \
+  "primary 1, capacity 2, admitted 7 of 7 committed" \
+  "misc.issue is the unit's primary port, 2 a cycle, and admits each committed custom-2 and DMA instruction of tpu::Misc once"
+
+printf 'tpu_trace: 1\ntpu_misc_issue_width: 3\n' > "$BUILD/tpu-misc-3.yml"
+printf 'tpu_misc_issue_width: 0\n' > "$BUILD/tpu-misc-0.yml"
+for width in 3 0; do
+  timeout 300 "$GEM5" -d "$BUILD/m5out-tpu-machine-misc-$width" "$REPO/examples/tpu/gem5/script_systolic.py" \
+    -c "$BUILD/tpu-one_cycle" --model "$BUILD/libtpu.so" --machine-config "$BUILD/tpu-misc-$width.yml" \
+    > "$BUILD/tpu-machine-misc-$width.gem5.log" 2>&1
+  rc[machine-misc-$width]=$?
+done
+report "exit ${rc[machine-misc-3]}, capacity $(machine_stat machine-misc-3 misc.issue.capacity), at most and in all $(misc_per_cycle machine-misc-3)" \
+  "exit 0, capacity 3, at most and in all 3 7" "gem5 follows tpu_misc_issue_width: 3 from the machine description"
+why=$(grep -Fc "tpu: machine description: tpu_misc_issue_width: '0' is not an issue width: at least 1" \
+  "$BUILD/tpu-machine-misc-0.gem5.log")
+report "exit ${rc[machine-misc-0]}, reason given $why" "exit 1, reason given 1" "gem5 stops on tpu_misc_issue_width: 0"
 
 exit $failed

@@ -74,7 +74,7 @@ class Tpu : public Model {
   }
   std::vector<const Port *> ports() const override {
     std::vector<const Port *> all;
-    for (const std::vector<const Port *> &unit : {sfu_.ports(), systolic_.ports(), xlu_.ports(), msa_.ports()})
+    for (const std::vector<const Port *> &unit : {sfu_.ports(), misc_.ports(), systolic_.ports(), xlu_.ports(), msa_.ports()})
       all.insert(all.end(), unit.begin(), unit.end());
     return all;
   }
