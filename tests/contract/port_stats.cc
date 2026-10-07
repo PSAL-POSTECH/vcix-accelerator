@@ -24,7 +24,8 @@ void expect(bool ok, const std::string &what) {
   if (!ok) failed = 1;
 }
 
-enum Variant { GOOD, NO_PRIMARY, TWO_PRIMARIES, SAME_NAME, NAMED_COMMITTED, LISTED_TWICE };
+enum Variant { GOOD, NO_PRIMARY, TWO_PRIMARIES, SAME_NAME, NAMED_COMMITTED, LISTED_TWICE, CLASHING_UNITS, CLASHING_PORTS,
+               CLASHING_ENCODINGS };
 enum Form { OP, PUSH, POP };
 constexpr uint32_t FORM_MASK = 0xF000007F;
 
@@ -37,7 +38,9 @@ class Toy : public Model {
  public:
   const char *name() const override { return "toy"; }
   std::vector<Encoding> owns() const override {
-    return {{bits_of(OP), FORM_MASK, "op"}, {bits_of(PUSH), FORM_MASK, "array push"}, {bits_of(POP), FORM_MASK, "pop"}};
+    return {{bits_of(OP), FORM_MASK, "op"},
+            {bits_of(PUSH), FORM_MASK, "array push"},
+            {bits_of(POP), FORM_MASK, V == CLASHING_ENCODINGS ? "array_push" : "pop"}};
   }
   void execute(const Host &, const Insn &) override {}
   bool can_accept(const Insn &insn, Cycle now) const override {
@@ -66,10 +69,12 @@ class Toy : public Model {
   }
 
  private:
-  Port issue_{V == NAMED_COMMITTED ? "committed" : "pipe", "issue", "instructions", 2,
+  Port issue_{V == NAMED_COMMITTED ? "committed" : V == CLASHING_UNITS ? "pi.pe" : "pipe",
+              V == CLASHING_PORTS ? "la.nes" : "issue", "instructions", 2,
               V == NO_PRIMARY ? Port::REPORTING : Port::PRIMARY};
-  Port lanes_{"pipe", V == SAME_NAME ? "issue" : "lanes", "elements", 8,
-              V == TWO_PRIMARIES ? Port::PRIMARY : Port::REPORTING};
+  Port lanes_{V == CLASHING_UNITS ? "pi_pe" : "pipe",
+              V == SAME_NAME ? "issue" : V == CLASHING_PORTS ? "la_nes" : "lanes", "elements", 8,
+              V == TWO_PRIMARIES || V == CLASHING_UNITS ? Port::PRIMARY : Port::REPORTING};
   Stream array_{"array", "entry", "rows", Port::PRIMARY, 3, 4};
 };
 
@@ -220,6 +225,12 @@ void the_list() {
                      "a port's unit is named 'committed', the name of the commit counts"),
          "create refuses a unit without one primary port, two ports of one name, one port listed twice, and a unit named "
          "committed");
+  expect(refused(export_model<Toy<CLASHING_UNITS>>(), "units pi.pe and pi_pe are both pi_pe as statistics") &&
+             refused(export_model<Toy<CLASHING_PORTS>>(),
+                     "ports pipe.la.nes and pipe.la_nes are both pipe.la_nes as statistics") &&
+             refused(export_model<Toy<CLASHING_ENCODINGS>>(),
+                     "encodings 'array push' and 'array_push' are both committed::array_push as statistics"),
+         "create refuses two units, two ports or two encodings whose names differ only where stat_name() prints '_'");
 }
 
 void within_capacity() {

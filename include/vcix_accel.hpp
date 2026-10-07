@@ -393,6 +393,7 @@ class Instance {
     std::abort();
   }
   const char *keep(const char *text) { return strings_.emplace_back(text).c_str(); }
+  // Fixes the stat list; names are checked as stat_name() prints them, so two names never meet in one statistic.
   void describe() {
     stats_.clear();
     strings_.clear();
@@ -400,20 +401,35 @@ class Instance {
     num_ports_ = ports.size();
     for (size_t i = 0; i < ports.size(); i++) {
       const Port *port = ports[i];
-      if (std::strcmp(port->unit(), "committed") == 0)
+      const std::string unit = stat_name(port->unit()), name = stat_name(port->name());
+      if (unit == "committed")
         throw std::invalid_argument("a port's unit is named 'committed', the name of the commit counts");
       size_t primaries = 0;
-      for (size_t j = 0; j < ports.size(); j++)
-        if (j != i && !std::strcmp(ports[j]->unit(), port->unit()) && !std::strcmp(ports[j]->name(), port->name()))
+      for (size_t j = 0; j < ports.size(); j++) {
+        const Port *other = ports[j];
+        if (stat_name(other->unit()) != unit) continue;
+        if (std::strcmp(other->unit(), port->unit()))
+          throw std::invalid_argument(std::string("units ") + port->unit() + " and " + other->unit() + " are both " +
+                                      unit + " as statistics");
+        primaries += other->primary();
+        if (j == i || stat_name(other->name()) != name) continue;
+        if (!std::strcmp(other->name(), port->name()))
           throw std::invalid_argument(std::string("two ports are named ") + port->unit() + "." + port->name());
-      for (const Port *other : ports) primaries += !std::strcmp(other->unit(), port->unit()) && other->primary();
+        throw std::invalid_argument(std::string("ports ") + port->unit() + "." + port->name() + " and " + other->unit() +
+                                    "." + other->name() + " are both " + unit + "." + name + " as statistics");
+      }
       if (primaries != 1)
         throw std::invalid_argument(std::string("unit ") + port->unit() + " has " + std::to_string(primaries) +
                                     " primary ports, not one");
-      const char *unit = keep(port->unit()), *name = keep(port->name()), *work = keep(port->unit_of_work());
+      const char *unit_kept = keep(port->unit()), *name_kept = keep(port->name()), *work = keep(port->unit_of_work());
       for (uint32_t kind : {VCIX_STAT_ADMITTED, VCIX_STAT_CAPACITY, VCIX_STAT_CYCLES, VCIX_STAT_OCCUPANCY})
-        stats_.push_back({unit, name, work, kind, port->primary() ? 1u : 0u});
+        stats_.push_back({unit_kept, name_kept, work, kind, port->primary() ? 1u : 0u});
     }
+    for (size_t i = 0; i < encodings_.size(); i++)
+      for (size_t j = 0; j < i; j++)
+        if (stat_name(encodings_[j].name) == stat_name(encodings_[i].name))
+          throw std::invalid_argument(std::string("encodings '") + encodings_[j].name + "' and '" + encodings_[i].name +
+                                      "' are both committed::" + stat_name(encodings_[i].name) + " as statistics");
     const char *committed = keep("committed"), *instructions = keep("instructions");
     for (const Encoding &e : encodings_) stats_.push_back({committed, keep(e.name), instructions, VCIX_STAT_COUNT, 0});
   }
