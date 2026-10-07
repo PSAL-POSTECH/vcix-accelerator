@@ -112,7 +112,7 @@ for sim in spike gem5; do
 done
 run spike other_abi other_abi "" pair
 ended 1
-part 1 "libother_abi.so has ABI 11, Spike has 10"
+part 1 "libother_abi.so has ABI 12, Spike has 11"
 verdict "spike refuses a table of another ABI version"
 run spike cannot_be_made cannot_be_made "" pair
 ended 1

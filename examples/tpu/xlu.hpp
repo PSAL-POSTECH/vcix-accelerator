@@ -46,7 +46,7 @@ class Xlu {
     return 1;
   }
   void commit(const Insn &, Id, Cycle) {}
-  void tick(Cycle) { stream_.tick(); }
+  void tick(Cycle now) { stream_.tick(now); }
   void reset() {
     stream_.reset();
     free_at_ = 0;
@@ -69,7 +69,7 @@ class Xlu {
   static bool is(const Insn &insn, uint32_t match) { return (insn.bits & FORM) == match; }
   static bool is_push(const Insn &insn) { return is(insn, PUSH) || is(insn, PUSH_PATTERN); }
 
-  Stream stream_{DEFAULT_LATENCY, DEFAULT_ENTRIES};
+  Stream stream_{"xlu", "input", "elements", vcix_accel::Port::PRIMARY, DEFAULT_LATENCY, DEFAULT_ENTRIES};
   Cycle free_at_ = 0;
 };
 

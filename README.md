@@ -431,7 +431,7 @@ the run scripts keep both command lines.
 
 ## Status
 
-- Interface: ABI version 10 (`VCIX_ACCEL_ABI_VERSION`); a simulator refuses a
+- Interface: ABI version 11 (`VCIX_ACCEL_ABI_VERSION`); a simulator refuses a
   model of another version. Each simulator carries a copy of
   `include/vcix_accel.h` (Spike `riscv/vcix_accel.h`, gem5
   `src/cpu/minor/vcix_accel.h`) that must be kept identical to this one;

@@ -46,7 +46,7 @@ class Msa {
     return 1;
   }
   void commit(const Insn &, Id, Cycle) {}
-  void tick(Cycle) { stream_.tick(); }
+  void tick(Cycle now) { stream_.tick(now); }
   void reset() {
     stream_.reset();
     free_at_ = 0;
@@ -69,7 +69,7 @@ class Msa {
   static bool is(const Insn &insn, uint32_t match) { return (insn.bits & FORM) == match; }
   static bool is_input(const Insn &insn) { return is(insn, PUSH) && !(vcix_accel::rs1(insn) & WEIGHT); }
 
-  Stream stream_{255, 256};
+  Stream stream_{"msa", "input", "rows", vcix_accel::Port::PRIMARY, 255, 256};
   // The first cycle the unit takes another instruction.
   Cycle free_at_ = 0;
 };
