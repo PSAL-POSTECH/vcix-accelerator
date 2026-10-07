@@ -72,6 +72,12 @@ class Tpu : public Model {
     xlu_.tick(now);
     msa_.tick(now);
   }
+  std::vector<const Port *> ports() const override {
+    std::vector<const Port *> all;
+    for (const std::vector<const Port *> &unit : {sfu_.ports(), systolic_.ports(), xlu_.ports(), msa_.ports()})
+      all.insert(all.end(), unit.begin(), unit.end());
+    return all;
+  }
   void reset() override {
     sfu_.reset();
     misc_.reset();

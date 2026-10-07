@@ -33,12 +33,12 @@ class Xlu {
   }
 
   bool can_accept(const Insn &insn, Cycle now) const {
-    if (now < free_at_) return false;
+    if (!issue_.room(now)) return false;
     if (is_push(insn)) return stream_.has_room(insn.vl);
     return stream_.holds(insn.vl);
   }
   Cycle issue(const Insn &insn, Id, Cycle now) {
-    free_at_ = now + 1;
+    issue_.admit(1, now);
     if (is_push(insn))
       stream_.push(insn.vl);
     else
@@ -49,8 +49,10 @@ class Xlu {
   void tick(Cycle now) { stream_.tick(now); }
   void reset() {
     stream_.reset();
-    free_at_ = 0;
+    issue_.reset();
   }
+
+  std::vector<const vcix_accel::Port *> ports() const { return {&stream_.entry(), &issue_}; }
 
   uint32_t input_entries() const { return stream_.input_entries(); }
   uint32_t output_entries() const { return stream_.output_entries(); }
@@ -69,8 +71,9 @@ class Xlu {
   static bool is(const Insn &insn, uint32_t match) { return (insn.bits & FORM) == match; }
   static bool is_push(const Insn &insn) { return is(insn, PUSH) || is(insn, PUSH_PATTERN); }
 
+  // One element a cycle enters the delay line; one instruction a cycle enters the unit.
   Stream stream_{"xlu", "input", "elements", vcix_accel::Port::PRIMARY, DEFAULT_LATENCY, DEFAULT_ENTRIES};
-  Cycle free_at_ = 0;
+  vcix_accel::Port issue_{"xlu", "issue", "instructions", 1};
 };
 
 }  // namespace tpu
