@@ -16,6 +16,7 @@ main:
     sf.vc.v.i   0x0, 0, v1, 0
     sf.vc.i     0x1, 0, 0, 4
     .insn r 0x2b, 3, 7, x0, a0, a1
+    .insn r 0x2b, 3, 8, x0, a0, a1
     .insn r 0x2b, 3, 2, x0, a0, a1
     .insn r 0x2b, 3, 1, x0, a0, a1
     .insn r 0x2b, 3, 14, x0, a0, a1

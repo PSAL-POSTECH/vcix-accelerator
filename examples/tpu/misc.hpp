@@ -43,6 +43,7 @@ class Misc {
       {0x0400302B, FUNCTION, "mvin"},
       {0x0600302B, FUNCTION, "mvout"},
       {0x0E00302B, FUNCTION, "dma_config_desc"},
+      {0x1000302B, FUNCTION, "dma_index_key"},
       {0x1C00302B, FUNCTION, "mvin3"},
   };
   static constexpr const char *WIDTH_KEY = "tpu_misc_issue_width";

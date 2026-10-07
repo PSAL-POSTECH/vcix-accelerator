@@ -174,6 +174,9 @@ class Functional {
     xlu_operation_ = 0;
     dma_descriptor_ = 0;
     dma_indirect_count_ = 0;
+    dma_keyed_ = false;
+    dma_key_ = 0;
+    dma_key_count_.clear();
     msa_weight_.clear();
     msa_output_.clear();
     msa_format_ = 0;
@@ -213,6 +216,7 @@ class Functional {
           {"xlu_push_pattern", &Functional::xlu_push_pattern},
           {"xlu_pop", &Functional::xlu_pop},
           {"dma_config_desc", &Functional::dma_config_desc},
+          {"dma_index_key", &Functional::dma_index_key},
           {"mvin", &Functional::mvin},
           {"mvin2", &Functional::mvin},
           {"mvin3", &Functional::mvin},
@@ -586,6 +590,11 @@ class Functional {
   static constexpr uint64_t SKIP = ~uint64_t{0};   // not an address: another transfer owns this position
 
   void dma_config_desc(const Host &host, const Insn &insn) { dma_descriptor_ = host.xreg(vcix_accel::rs1(insn)); }
+  // x[rs1] names what the indirect transfers after it belong to, for the tools that replay them: see dma_indices.
+  void dma_index_key(const Host &host, const Insn &insn) {
+    dma_keyed_ = true;
+    dma_key_ = host.xreg(vcix_accel::rs1(insn));
+  }
 
   struct Transfer {
     uint64_t memory, scratchpad;
@@ -715,17 +724,32 @@ class Functional {
     return *index * t.indirect_stride * t.element_size;
   }
 
-  // The indices an indirect transfer read, for the tools that replay it: <--base-path>/indirect_access/indirect_index<n>.raw.
-  // Written as the old Spike wrote it: asking the map for a position it lacks adds that position, as 0.
-  void dma_indices(const char *name, std::map<uint64_t, uint64_t> &indices) {
+  // The indices an indirect transfer read, for the tools that replay it. Before any dma_index_key:
+  // <--base-path>/indirect_access/indirect_index<n>.raw, n over the run, each index as read, written as the old Spike
+  // wrote it: asking the map for a position it lacks adds that position, as 0. After one with key k:
+  // indirect_index_<k>_<n>.raw, n over the transfers of k, one uint64 per position of the tensor in its order, the
+  // elements its index added to the address (index x indirect_stride), 0 where it read none.
+  void dma_indices(const char *name, const Transfer &t, std::map<uint64_t, uint64_t> &indices) {
     if (base_path_.empty()) fail("%s: an indirect transfer writes its indices under --base-path, and none was given", name);
-    const std::string path = base_path_ + "/indirect_access/indirect_index" + std::to_string(dma_indirect_count_++) + ".raw";
+    const std::string path =
+        base_path_ + "/indirect_access/indirect_index" +
+        (dma_keyed_ ? "_" + std::to_string(dma_key_) + "_" + std::to_string(dma_key_count_[dma_key_]++)
+                    : std::to_string(dma_indirect_count_++)) +
+        ".raw";
     FILE *file = std::fopen(path.c_str(), "wb");
     if (!file) {
       std::fprintf(stderr, "Failed to open file for writing: %s\n", path.c_str());
       return;
     }
-    for (size_t i = 0; i < indices.size(); ++i) std::fwrite(&indices[i], sizeof(uint64_t), 1, file);
+    if (dma_keyed_) {
+      const uint64_t elements = t.dim_size[0] * t.dim_size[1] * t.dim_size[2] * t.dim_size[3];
+      std::vector<uint64_t> added(elements, 0);
+      for (const std::pair<const uint64_t, uint64_t> &at : indices)
+        if (at.first < elements) added[at.first] = at.second * t.indirect_stride;
+      std::fwrite(added.data(), sizeof(uint64_t), added.size(), file);
+    } else {
+      for (size_t i = 0; i < indices.size(); ++i) std::fwrite(&indices[i], sizeof(uint64_t), 1, file);
+    }
     std::fclose(file);
   }
 
@@ -772,7 +796,7 @@ class Functional {
                   default: break;
                 }
               }
-    if (t.indirect) dma_indices("mvin", indices);
+    if (t.indirect) dma_indices("mvin", t, indices);
   }
 
   void mvout(const Host &host, const Insn &insn) {
@@ -827,7 +851,7 @@ class Functional {
                     store<uint64_t>(host, to, (t.accumulate ? load<uint64_t>(host, to) : 0) + load<uint64_t>(host, from));
                 }
               }
-    if (t.indirect) dma_indices("mvout", indices);
+    if (t.indirect) dma_indices("mvout", t, indices);
   }
   static uint64_t dma_address(const Transfer &t, const char *name, uint64_t position) {
     if (position >= t.address.size())
@@ -859,6 +883,9 @@ class Functional {
 
   uint64_t dma_descriptor_ = 0;
   uint64_t dma_indirect_count_ = 0;
+  bool dma_keyed_ = false;  // a dma_index_key ran: dumps are named by key
+  uint64_t dma_key_ = 0;
+  std::map<uint64_t, uint64_t> dma_key_count_;  // per key, the indirect transfers dumped under it
 };
 
 }  // namespace tpu
