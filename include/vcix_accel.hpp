@@ -3,7 +3,10 @@
 #define VCIX_ACCEL_HPP
 
 #include <charconv>
+#include <cinttypes>
+#include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <deque>
 #include <memory>
@@ -99,6 +102,122 @@ class Host {
   const vcix_host *h_;
 };
 
+// Where a unit decides how much more enters this cycle; it counts what it let in. Names must outlive the model.
+class Port {
+ public:
+  enum Role : uint32_t { REPORTING = 0, PRIMARY = 1 };
+  Port(const char *unit, const char *name, const char *unit_of_work, uint64_t capacity_per_cycle, Role role = REPORTING)
+      : unit_(unit), name_(name), unit_of_work_(unit_of_work), capacity_(capacity_per_cycle), role_(role) {
+    if (!unit || !name || !unit_of_work) throw std::invalid_argument("a port's unit, name and unit of work are named");
+    set_capacity(capacity_per_cycle);
+  }
+  // In configure only: utilization reads one capacity for the whole run.
+  void set_capacity(uint64_t capacity_per_cycle) {
+    if (capacity_per_cycle == 0) throw std::invalid_argument(std::string("port ") + unit_ + "." + name_ + ": capacity 0");
+    capacity_ = capacity_per_cycle;
+  }
+
+  uint64_t room(Cycle now) const { return now == cycle_ ? capacity_ - used_ : capacity_; }
+  // More than room(now) is a broken model: the run stops.
+  void admit(uint64_t amount, Cycle now) {
+    const uint64_t left = room(now);
+    if (amount > left) {
+      std::fprintf(stderr, "vcix_accel: port %s.%s admitted %" PRIu64 " %s in cycle %" PRIu64 " with room for %" PRIu64 "\n",
+                   unit_, name_, amount, unit_of_work_, now, left);
+      std::abort();
+    }
+    if (now != cycle_) used_ = 0;
+    cycle_ = now;
+    used_ += amount;
+    admitted_ += amount;
+  }
+  // Called once a cycle with what waits behind the entry; summed into occupancy.
+  void hold(uint64_t amount) { occupancy_ += amount; }
+
+  const char *unit() const { return unit_; }
+  const char *name() const { return name_; }
+  const char *unit_of_work() const { return unit_of_work_; }
+  uint64_t capacity() const { return capacity_; }
+  bool primary() const { return role_ == PRIMARY; }
+  uint64_t admitted() const { return admitted_; }
+  uint64_t occupancy() const { return occupancy_; }
+
+ private:
+  const char *unit_, *name_, *unit_of_work_;
+  uint64_t capacity_;
+  Role role_;
+  Cycle cycle_ = Unknown;
+  uint64_t used_ = 0;
+  uint64_t admitted_ = 0;
+  uint64_t occupancy_ = 0;
+};
+
+// An input queue, a delay line of `slots` that one element a cycle enters, and an output queue; the entry is a Port.
+class Stream {
+ public:
+  Stream(const char *unit, const char *name, const char *unit_of_work, Port::Role role, uint32_t slots, uint32_t capacity)
+      : entry_(unit, name, unit_of_work, 1, role) {
+    configure(slots, capacity);
+  }
+  void configure(uint32_t slots, uint32_t capacity) {
+    slots_ = slots;
+    capacity_ = capacity;
+    line_.assign((uint64_t{slots} + 63) / 64, 0);
+    head_ = 0;
+    in_line_ = 0;
+  }
+
+  bool has_room(uint32_t elements) const { return elements <= capacity_ - input_; }
+  bool holds(uint32_t elements) const { return elements <= output_; }
+  void push(uint32_t elements) { input_ += elements; }
+  void pop(uint32_t elements) { output_ -= elements; }
+  void tick(Cycle now) {
+    if (output_ != capacity_) advance(now);
+    entry_.hold(in_line_);
+  }
+  // Statistics stay.
+  void reset() {
+    input_ = output_ = 0;
+    line_.assign(line_.size(), 0);
+    head_ = 0;
+    in_line_ = 0;
+  }
+
+  uint32_t input_entries() const { return input_; }
+  uint32_t output_entries() const { return output_; }
+  uint32_t slots() const { return slots_; }
+  uint32_t queue_capacity() const { return capacity_; }
+  const Port &entry() const { return entry_; }
+
+ private:
+  void advance(Cycle now) {
+    uint64_t &word = line_[head_ / 64];
+    const uint64_t slot = uint64_t{1} << (head_ % 64);
+    if (word & slot) {
+      output_++;
+      in_line_--;
+    }
+    if (input_ && entry_.room(now)) {
+      entry_.admit(1, now);
+      word |= slot;
+      input_--;
+      in_line_++;
+    } else {
+      word &= ~slot;
+    }
+    head_ = head_ + 1 == slots_ ? 0 : head_ + 1;
+  }
+
+  Port entry_;
+  uint32_t slots_ = 0;
+  uint32_t capacity_ = 0;
+  uint32_t input_ = 0;
+  uint32_t output_ = 0;
+  uint32_t head_ = 0;
+  uint32_t in_line_ = 0;
+  std::vector<uint64_t> line_;
+};
+
 // Must be copyable with its state in its members. name() and owns() are asked of an object never configured.
 class Model {
  public:
@@ -118,6 +237,11 @@ class Model {
 
   virtual void reset() {}
 
+  // The ports that decide its timing, one PRIMARY per unit, the same list each time. Asked anew: keep no pointer.
+  virtual std::vector<const Port *> ports() const { return {}; }
+  // Cycles ticked since create, the ticks replayed after a squash included.
+  uint64_t cycles() const { return cycles_; }
+
  protected:
   // True while commit and tick are replayed after a squash: skip what must happen once.
   bool replaying() const { return replaying_; }
@@ -126,6 +250,7 @@ class Model {
   template <class M>
   friend class Instance;
   bool replaying_ = false;
+  uint64_t cycles_ = 0;
 };
 
 // Copies the model before each issue; a squash puts the copy back and replays the ticks and commits since.
@@ -137,11 +262,27 @@ class Instance {
  public:
   M model;
 
+  Instance() : encodings_(model.owns()), committed_(encodings_.size(), 0) {}
+
+  // Configures the model, then fixes its list of statistics; a port list that breaks the rules throws.
+  void configure(const Config &config) {
+    model.configure(config);
+    describe();
+  }
+  void tick(Cycle now) {
+    model.cycles_++;
+    model.tick(now);
+  }
   Cycle issue(const Insn &insn, Id id, Cycle now) {
     issued_.push_back({id, now, model});
     return model.issue(insn, id, now);
   }
   void commit(const Insn &insn, Id id, Cycle now) {
+    for (size_t i = 0; i < encodings_.size(); i++)
+      if ((insn.bits & encodings_[i].mask) == encodings_[i].match) {
+        committed_[i]++;
+        break;
+      }
     model.commit(insn, id, now);
     if (!issued_.empty()) issued_.pop_front();
     while (!commits_.empty() && (issued_.empty() || commits_.front().cycle <= issued_.front().cycle))
@@ -159,7 +300,7 @@ class Instance {
     while (commit != commits_.end() && commit->cycle <= issued) ++commit;
     model.replaying_ = true;
     for (Cycle cycle = issued + 1; cycle <= now; cycle++) {
-      model.tick(cycle);
+      tick(cycle);
       for (; commit != commits_.end() && commit->cycle == cycle; ++commit)
         model.commit(commit->insn, commit->id, cycle);
     }
@@ -171,7 +312,102 @@ class Instance {
     model.reset();
   }
 
+  const std::vector<vcix_stat> &stats() const { return stats_; }
+  // Each port's ADMITTED, CAPACITY, CYCLES and OCCUPANCY in the order of ports(), then each encoding's commits.
+  void read_stats(uint64_t *values) const {
+    const std::vector<const Port *> ports = model.ports();
+    if (ports.size() != num_ports_) broken("ports() changed its length since create");
+    for (size_t p = 0; p < ports.size(); p++) {
+      const vcix_stat &described = stats_[PER_PORT * p];
+      if (std::strcmp(ports[p]->unit(), described.unit) || std::strcmp(ports[p]->name(), described.name))
+        broken("ports() changed its order since create");
+      values[PER_PORT * p] = ports[p]->admitted();
+      values[PER_PORT * p + 1] = ports[p]->capacity();
+      values[PER_PORT * p + 2] = model.cycles();
+      values[PER_PORT * p + 3] = ports[p]->occupancy();
+    }
+    for (size_t i = 0; i < committed_.size(); i++) values[PER_PORT * num_ports_ + i] = committed_[i];
+  }
+  // The values as gem5 names them: vcix.<unit>.<port>.<stat>, vcix.<unit>.utilization, vcix.committed::<encoding>.
+  void dump_stats(FILE *out) const {
+    std::vector<uint64_t> values(stats_.size());
+    read_stats(values.data());
+    std::vector<std::string> units;
+    for (size_t p = 0; p < num_ports_; p++) {
+      const std::string unit = stat_name(stats_[PER_PORT * p].unit);
+      bool seen = false;
+      for (const std::string &u : units) seen = seen || u == unit;
+      if (!seen) units.push_back(unit);
+    }
+    for (const std::string &unit : units)
+      for (size_t p = 0; p < num_ports_; p++) {
+        const vcix_stat *port = &stats_[PER_PORT * p];
+        if (stat_name(port->unit) != unit) continue;
+        const uint64_t *v = &values[PER_PORT * p];
+        const double utilization = double(v[0]) / (double(v[1]) * double(v[2]));
+        const std::string at = "vcix." + unit + "." + stat_name(port->name) + ".";
+        if (port->primary)
+          std::fprintf(out, "%-48s %f  # %s: admitted / (capacity * cycles)\n", ("vcix." + unit + ".utilization").c_str(),
+                       utilization, port->name);
+        std::fprintf(out, "%-48s %" PRIu64 "  # %s\n", (at + "admitted").c_str(), v[0], port->unit_of_work);
+        std::fprintf(out, "%-48s %" PRIu64 "  # %s per cycle\n", (at + "capacity").c_str(), v[1], port->unit_of_work);
+        std::fprintf(out, "%-48s %" PRIu64 "\n", (at + "cycles").c_str(), v[2]);
+        std::fprintf(out, "%-48s %" PRIu64 "  # %s held, summed over cycles\n", (at + "occupancy").c_str(), v[3],
+                     port->unit_of_work);
+        std::fprintf(out, "%-48s %f\n", (at + "utilization").c_str(), utilization);
+      }
+    for (size_t i = 0; i < committed_.size(); i++)
+      std::fprintf(out, "%-48s %" PRIu64 "\n", ("vcix.committed::" + stat_name(stats_[PER_PORT * num_ports_ + i].name)).c_str(),
+                   values[PER_PORT * num_ports_ + i]);
+  }
+  // A name as a gem5 statistic: each character outside [A-Za-z0-9_] becomes '_'.
+  static std::string stat_name(const char *name) {
+    std::string out(name);
+    for (char &c : out)
+      if (!((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_')) c = '_';
+    return out;
+  }
+
  private:
+  static constexpr size_t PER_PORT = 4;
+
+  [[noreturn]] static void broken(const char *why) {
+    std::fprintf(stderr, "vcix_accel: %s\n", why);
+    std::abort();
+  }
+  const char *keep(const char *text) { return strings_.emplace_back(text).c_str(); }
+  void describe() {
+    stats_.clear();
+    strings_.clear();
+    const std::vector<const Port *> ports = model.ports();
+    num_ports_ = ports.size();
+    for (const Port *port : ports) {
+      if (std::strcmp(port->unit(), "committed") == 0)
+        throw std::invalid_argument("a port's unit is named 'committed', the name of the commit counts");
+      size_t primaries = 0;
+      for (const Port *other : ports) {
+        if (other == port) continue;
+        if (!std::strcmp(other->unit(), port->unit()) && !std::strcmp(other->name(), port->name()))
+          throw std::invalid_argument(std::string("two ports are named ") + port->unit() + "." + port->name());
+      }
+      for (const Port *other : ports) primaries += !std::strcmp(other->unit(), port->unit()) && other->primary();
+      if (primaries != 1)
+        throw std::invalid_argument(std::string("unit ") + port->unit() + " has " + std::to_string(primaries) +
+                                    " primary ports, not one");
+      const char *unit = keep(port->unit()), *name = keep(port->name()), *work = keep(port->unit_of_work());
+      for (uint32_t kind : {VCIX_STAT_ADMITTED, VCIX_STAT_CAPACITY, VCIX_STAT_CYCLES, VCIX_STAT_OCCUPANCY})
+        stats_.push_back({unit, name, work, kind, port->primary() ? 1u : 0u});
+    }
+    const char *committed = keep("committed"), *instructions = keep("instructions");
+    for (const Encoding &e : encodings_) stats_.push_back({committed, keep(e.name), instructions, VCIX_STAT_COUNT, 0});
+  }
+
+  std::vector<Encoding> encodings_;
+  std::vector<uint64_t> committed_;
+  size_t num_ports_ = 0;
+  std::vector<vcix_stat> stats_;
+  std::deque<std::string> strings_;
+
   struct Issued {
     Id id;
     Cycle cycle;
@@ -205,7 +441,7 @@ __attribute__((visibility("hidden"))) const vcix_model *export_model() {
       [](const vcix_config *c, char *error, size_t error_size) -> void * {
         try {
           std::unique_ptr<Instance<M>> instance(new Instance<M>);
-          instance->model.configure(Config(c));
+          instance->configure(Config(c));
           return instance.release();
         } catch (const std::exception &e) {
           std::snprintf(error, error_size, "%s", e.what());
@@ -226,9 +462,15 @@ __attribute__((visibility("hidden"))) const vcix_model *export_model() {
       },
       [](void *s, Id first, Cycle n) { static_cast<Instance<M> *>(s)->squash(first, n); },
       [](void *s, const vcix_insn *i, Id id, Cycle n) { static_cast<Instance<M> *>(s)->commit(*i, id, n); },
-      [](void *s, Cycle n) { static_cast<Instance<M> *>(s)->model.tick(n); },
+      [](void *s, Cycle n) { static_cast<Instance<M> *>(s)->tick(n); },
       [](void *s, Id id, Cycle n) -> int { return static_cast<const Instance<M> *>(s)->model.ready(id, n); },
       [](void *s) { static_cast<Instance<M> *>(s)->reset(); },
+      [](void *s) -> size_t { return static_cast<const Instance<M> *>(s)->stats().size(); },
+      [](void *s, size_t i) -> const vcix_stat * {
+        const std::vector<vcix_stat> &stats = static_cast<const Instance<M> *>(s)->stats();
+        return i < stats.size() ? &stats[i] : nullptr;
+      },
+      [](void *s, uint64_t *values) { static_cast<const Instance<M> *>(s)->read_stats(values); },
   };
   return &table;
 }
