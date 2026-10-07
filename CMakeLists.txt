@@ -49,3 +49,5 @@ target_link_libraries(port_stats PRIVATE vcix_accel)
 
 add_executable(timing_probe tools/timing_probe.cc)
 target_link_libraries(timing_probe PRIVATE vcix_accel ${CMAKE_DL_LIBS})
+add_executable(timing_trace tools/timing_trace.cc)
+target_link_libraries(timing_trace PRIVATE vcix_accel ${CMAKE_DL_LIBS})
