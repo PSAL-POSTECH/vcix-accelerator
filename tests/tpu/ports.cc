@@ -72,7 +72,7 @@ class Run {
     m->squash(self_, flight_.back().id, now_);
     flight_.pop_back();
   }
-  // The value of a port's statistic, or of a commit count with unit "committed".
+  // The value of a unit's statistic at its primary port `name`, or of a commit count with unit "committed".
   uint64_t stat(const char *unit, const char *name, uint32_t kind) const {
     std::vector<uint64_t> values(m->num_stats(self_));
     m->read_stats(self_, values.data());
@@ -104,27 +104,23 @@ class Run {
 
 std::string n(uint64_t v) { return std::to_string(v); }
 
-// The list: four entries per port in the order the units are asked, a primary for each unit, then the commits.
+// The list: four entries per unit at its primary port, units in the order the model asks them, then the commits.
 void list() {
   Run run;
-  const char *expected[][3] = {{"sfu", "entry", "1"},          {"misc", "issue", "1"},
-                               {"systolic", "input", "1"},     {"systolic", "issue", "0"},
-                               {"systolic", "weight_push", "0"}, {"systolic", "pop", "0"},   {"xlu", "input", "1"},
-                               {"xlu", "issue", "0"},          {"msa", "input", "1"},      {"msa", "issue", "0"},
-                               {"msa", "weight_push", "0"},     {"msa", "pop", "0"}};
-  const size_t ports = sizeof expected / sizeof expected[0];
-  bool ok = m->num_stats(run.self()) == 4 * ports + m->num_encodings;
-  for (size_t p = 0; ok && p < ports; p++)
+  const char *expected[][2] = {{"sfu", "entry"}, {"misc", "issue"}, {"systolic", "input"}, {"xlu", "input"}, {"msa", "input"}};
+  const size_t units = sizeof expected / sizeof expected[0];
+  bool ok = m->num_stats(run.self()) == 4 * units + m->num_encodings;
+  for (size_t u = 0; ok && u < units; u++)
     for (uint32_t kind = 0; kind < 4; kind++) {
-      const vcix_stat *s = m->stat(run.self(), 4 * p + kind);
-      ok = ok && !strcmp(s->unit, expected[p][0]) && !strcmp(s->name, expected[p][1]) && s->kind == kind &&
-           s->primary == uint32_t(expected[p][2][0] - '0');
+      const vcix_stat *s = m->stat(run.self(), 4 * u + kind);
+      ok = ok && !strcmp(s->unit, expected[u][0]) && !strcmp(s->name, expected[u][1]) && s->kind == kind;
     }
   for (size_t e = 0; ok && e < m->num_encodings; e++) {
-    const vcix_stat *s = m->stat(run.self(), 4 * ports + e);
+    const vcix_stat *s = m->stat(run.self(), 4 * units + e);
     ok = !strcmp(s->unit, "committed") && !strcmp(s->name, m->encodings[e].name) && s->kind == VCIX_STAT_COUNT;
   }
-  check(ok, "12 ports, one primary per unit (sfu.entry, misc.issue, systolic/xlu/msa.input), then one commit count per encoding");
+  check(ok, "5 units at their primary ports (sfu.entry, misc.issue, systolic/xlu/msa.input), no other port, then one "
+            "commit count per encoding");
 }
 
 // One row through a 7-slot array: it enters in the tick after its push and is held 7 cycles.
@@ -137,22 +133,20 @@ void one_row() {
   const uint64_t cycles = run.stat("systolic", "input", VCIX_STAT_CYCLES);
   const uint64_t occupancy = run.stat("systolic", "input", VCIX_STAT_OCCUPANCY);
   const uint64_t capacity = run.stat("systolic", "input", VCIX_STAT_CAPACITY);
-  const uint64_t issued = run.stat("systolic", "issue", VCIX_STAT_ADMITTED);
   const uint64_t committed = run.stat("committed", "systolic input push", VCIX_STAT_COUNT);
-  check(admitted == 1 && capacity == 1 && cycles == 20 && occupancy == 7 && issued == 1 && committed == 1,
+  check(admitted == 1 && capacity == 1 && cycles == 20 && occupancy == 7 && committed == 1,
         "one input row over 20 cycles: admitted " + n(admitted) + " of capacity " + n(capacity) + " x cycles " +
-            n(cycles) + ", occupancy " + n(occupancy) + " (7 slots), issue " + n(issued) + ", committed " +
-            n(committed) + "; expected 1, 1, 20, 7, 1, 1");
+            n(cycles) + ", occupancy " + n(occupancy) + " (7 slots), committed " + n(committed) +
+            "; expected 1, 1, 20, 7, 1");
   run.issue(POP, 1);
-  run.next();
-  const uint64_t popped = run.stat("systolic", "pop", VCIX_STAT_ADMITTED);
-  const uint64_t pop_capacity = run.stat("systolic", "pop", VCIX_STAT_CAPACITY);
+  for (int c = 0; c < 20; c++) run.next();
+  const uint64_t popped = run.stat("committed", "systolic pop", VCIX_STAT_COUNT);
+  const uint64_t still = run.stat("systolic", "input", VCIX_STAT_ADMITTED);
   const uint64_t others = run.stat("sfu", "entry", VCIX_STAT_ADMITTED) + run.stat("xlu", "input", VCIX_STAT_ADMITTED) +
-                          run.stat("msa", "input", VCIX_STAT_ADMITTED) +
-                          run.stat("systolic", "weight_push", VCIX_STAT_ADMITTED);
-  check(popped == 1 && pop_capacity == 8 && others == 0,
-        "its pop admits 1 row at the pop port of 8 a cycle (" + n(popped) + ", " + n(pop_capacity) +
-            "), and no other port admitted anything (" + n(others) + ")");
+                          run.stat("msa", "input", VCIX_STAT_ADMITTED) + run.stat("misc", "issue", VCIX_STAT_ADMITTED);
+  check(popped == 1 && still == 1 && others == 0,
+        "its pop commits (" + n(popped) + ") and admits nothing at the input (" + n(still) +
+            "), and no other unit admitted anything (" + n(others) + ")");
 }
 
 // Pushes and pops of two, one instruction a cycle: the array takes a row every cycle once it is full.
@@ -206,9 +200,10 @@ void sfu_and_xlu() {
   for (int c = 3; c <= 20; c++) msa.next();
   msa.issue(MSA_POP, 3);
   msa.next();
-  check(msa.stat("msa", "weight_push", VCIX_STAT_ADMITTED) == 1 && msa.stat("msa", "input", VCIX_STAT_ADMITTED) == 3 &&
-            msa.stat("msa", "pop", VCIX_STAT_ADMITTED) == 3 && msa.stat("msa", "issue", VCIX_STAT_ADMITTED) == 3,
-        "msa: a weight push counts 1 at weight_push and enters nothing; an input push of 3 enters 3 rows; its pop takes 3");
+  for (int c = 0; c < 20; c++) msa.next();
+  check(msa.stat("msa", "input", VCIX_STAT_ADMITTED) == 3 && msa.stat("committed", "msa push", VCIX_STAT_COUNT) == 2 &&
+            msa.stat("committed", "msa pop", VCIX_STAT_COUNT) == 1,
+        "msa: a weight push enters nothing, an input push of 3 enters 3 rows, and both pushes and the pop commit");
 }
 
 // Ten independent misc instructions, offered until refused each cycle: two a cycle for five cycles.
