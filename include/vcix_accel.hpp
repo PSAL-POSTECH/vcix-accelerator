@@ -111,7 +111,7 @@ class Port {
     if (!unit || !name || !unit_of_work) throw std::invalid_argument("a port's unit, name and unit of work are named");
     set_capacity(capacity_per_cycle);
   }
-  // In configure only: utilization reads one capacity for the whole run.
+  // In configure only: utilized cycles read one capacity for the whole run.
   void set_capacity(uint64_t capacity_per_cycle) {
     if (capacity_per_cycle == 0) throw std::invalid_argument(std::string("port ") + unit_ + "." + name_ + ": capacity 0");
     capacity_ = capacity_per_cycle;
@@ -330,7 +330,7 @@ class Instance {
 
   const std::vector<vcix_stat> &stats() const { return stats_; }
   // Each port's ADMITTED, CAPACITY, CYCLES and OCCUPANCY in the order of ports(), then each encoding's commits.
-  // A port's CYCLES is the ticks plus its reopened() rooms, so its utilization cannot exceed 1.
+  // A port's CYCLES is the ticks plus its reopened() rooms, so its utilized cycles cannot exceed its CYCLES.
   void read_stats(uint64_t *values) const {
     const std::vector<const Port *> ports = model.ports();
     if (ports.size() != num_ports_) broken("ports() changed its length since create");
@@ -345,7 +345,7 @@ class Instance {
     }
     for (size_t i = 0; i < committed_.size(); i++) values[PER_PORT * num_ports_ + i] = committed_[i];
   }
-  // The values as gem5 names them: vcix.<unit>.<port>.<stat>, vcix.<unit>.utilization, vcix.committed.<encoding>.
+  // The values as gem5 names them: vcix.<unit>.<port>.<stat>, vcix.<unit>.utilized_cycles, vcix.committed.<encoding>.
   void dump_stats(FILE *out) const {
     std::vector<uint64_t> values(stats_.size());
     read_stats(values.data());
@@ -361,18 +361,18 @@ class Instance {
         const vcix_stat *port = &stats_[PER_PORT * p];
         if (stat_name(port->unit) != unit) continue;
         const uint64_t *v = &values[PER_PORT * p];
-        const double utilization = double(v[0]) / (double(v[1]) * double(v[2]));
+        const double utilized_cycles = double(v[0]) / double(v[1]);
         const std::string at = "vcix." + unit + "." + stat_name(port->name) + ".";
         if (port->primary)
-          std::fprintf(out, "%-48s %f  # %s: admitted / (capacity * cycles)\n", ("vcix." + unit + ".utilization").c_str(),
-                       utilization, port->name);
+          std::fprintf(out, "%-48s %f  # %s: admitted / capacity\n", ("vcix." + unit + ".utilized_cycles").c_str(),
+                       utilized_cycles, port->name);
         std::fprintf(out, "%-48s %" PRIu64 "  # %s\n", (at + "admitted").c_str(), v[0], port->unit_of_work);
         std::fprintf(out, "%-48s %" PRIu64 "  # %s per cycle\n", (at + "capacity").c_str(), v[1], port->unit_of_work);
         std::fprintf(out, "%-48s %" PRIu64 "\n", (at + "cycles").c_str(), v[2]);
         std::fprintf(out, "%-48s %" PRIu64 "  # %s held, summed over cycles\n", (at + "occupancy").c_str(), v[3],
                      port->unit_of_work);
         std::fprintf(out, "%-48s %u\n", (at + "primary").c_str(), port->primary ? 1u : 0u);
-        std::fprintf(out, "%-48s %f\n", (at + "utilization").c_str(), utilization);
+        std::fprintf(out, "%-48s %f\n", (at + "utilized_cycles").c_str(), utilized_cycles);
       }
     for (size_t i = 0; i < committed_.size(); i++)
       std::fprintf(out, "%-48s %" PRIu64 "\n", ("vcix.committed." + stat_name(stats_[PER_PORT * num_ports_ + i].name)).c_str(),
