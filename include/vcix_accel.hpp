@@ -133,6 +133,11 @@ class Port {
   }
   // Called once a cycle with what waits behind the entry; summed into occupancy.
   void hold(uint64_t amount) { occupancy_ += amount; }
+  // Forgets what this cycle admitted, as a model's reset must; the counts stay.
+  void reset() {
+    cycle_ = Unknown;
+    used_ = 0;
+  }
 
   const char *unit() const { return unit_; }
   const char *name() const { return name_; }
@@ -177,6 +182,7 @@ class Stream {
   }
   // Statistics stay.
   void reset() {
+    entry_.reset();
     input_ = output_ = 0;
     line_.assign(line_.size(), 0);
     head_ = 0;
