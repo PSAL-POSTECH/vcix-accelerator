@@ -229,7 +229,7 @@ void the_list() {
              refused(export_model<Toy<CLASHING_PORTS>>(),
                      "ports pipe.la.nes and pipe.la_nes are both pipe.la_nes as statistics") &&
              refused(export_model<Toy<CLASHING_ENCODINGS>>(),
-                     "encodings 'array push' and 'array_push' are both committed::array_push as statistics"),
+                     "encodings 'array push' and 'array_push' are both committed.array_push as statistics"),
          "create refuses two units, two ports or two encodings whose names differ only where stat_name() prints '_'");
 }
 
@@ -347,21 +347,24 @@ void the_dump() {
       "vcix.pipe.issue.capacity                         2  # instructions per cycle\n"
       "vcix.pipe.issue.cycles                           4\n"
       "vcix.pipe.issue.occupancy                        0  # instructions held, summed over cycles\n"
+      "vcix.pipe.issue.primary                          1\n"
       "vcix.pipe.issue.utilization                      0.125000\n"
       "vcix.pipe.lanes.admitted                         4  # elements\n"
       "vcix.pipe.lanes.capacity                         8  # elements per cycle\n"
       "vcix.pipe.lanes.cycles                           4\n"
       "vcix.pipe.lanes.occupancy                        0  # elements held, summed over cycles\n"
+      "vcix.pipe.lanes.primary                          0\n"
       "vcix.pipe.lanes.utilization                      0.125000\n"
       "vcix.array.utilization                           0.500000  # entry: admitted / (capacity * cycles)\n"
       "vcix.array.entry.admitted                        2  # rows\n"
       "vcix.array.entry.capacity                        1  # rows per cycle\n"
       "vcix.array.entry.cycles                          4\n"
       "vcix.array.entry.occupancy                       5  # rows held, summed over cycles\n"
+      "vcix.array.entry.primary                         1\n"
       "vcix.array.entry.utilization                     0.500000\n"
-      "vcix.committed::op                               1\n"
-      "vcix.committed::array_push                       1\n"
-      "vcix.committed::pop                              0\n";
+      "vcix.committed.op                                1\n"
+      "vcix.committed.array_push                        1\n"
+      "vcix.committed.pop                               0\n";
   expect(std::string(text) == want, "dump_stats prints the gem5 names, the primary port's utilization per unit first");
   if (std::string(text) != want) printf("%s", text);
 }

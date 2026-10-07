@@ -345,7 +345,7 @@ class Instance {
     }
     for (size_t i = 0; i < committed_.size(); i++) values[PER_PORT * num_ports_ + i] = committed_[i];
   }
-  // The values as gem5 names them: vcix.<unit>.<port>.<stat>, vcix.<unit>.utilization, vcix.committed::<encoding>.
+  // The values as gem5 names them: vcix.<unit>.<port>.<stat>, vcix.<unit>.utilization, vcix.committed.<encoding>.
   void dump_stats(FILE *out) const {
     std::vector<uint64_t> values(stats_.size());
     read_stats(values.data());
@@ -371,10 +371,11 @@ class Instance {
         std::fprintf(out, "%-48s %" PRIu64 "\n", (at + "cycles").c_str(), v[2]);
         std::fprintf(out, "%-48s %" PRIu64 "  # %s held, summed over cycles\n", (at + "occupancy").c_str(), v[3],
                      port->unit_of_work);
+        std::fprintf(out, "%-48s %u\n", (at + "primary").c_str(), port->primary ? 1u : 0u);
         std::fprintf(out, "%-48s %f\n", (at + "utilization").c_str(), utilization);
       }
     for (size_t i = 0; i < committed_.size(); i++)
-      std::fprintf(out, "%-48s %" PRIu64 "\n", ("vcix.committed::" + stat_name(stats_[PER_PORT * num_ports_ + i].name)).c_str(),
+      std::fprintf(out, "%-48s %" PRIu64 "\n", ("vcix.committed." + stat_name(stats_[PER_PORT * num_ports_ + i].name)).c_str(),
                    values[PER_PORT * num_ports_ + i]);
   }
   // A name as a gem5 statistic: each character outside [A-Za-z0-9_] becomes '_'.
@@ -429,7 +430,7 @@ class Instance {
       for (size_t j = 0; j < i; j++)
         if (stat_name(encodings_[j].name) == stat_name(encodings_[i].name))
           throw std::invalid_argument(std::string("encodings '") + encodings_[j].name + "' and '" + encodings_[i].name +
-                                      "' are both committed::" + stat_name(encodings_[i].name) + " as statistics");
+                                      "' are both committed." + stat_name(encodings_[i].name) + " as statistics");
     const char *committed = keep("committed"), *instructions = keep("instructions");
     for (const Encoding &e : encodings_) stats_.push_back({committed, keep(e.name), instructions, VCIX_STAT_COUNT, 0});
   }

@@ -30,7 +30,7 @@ dumps() { grep -c 'Begin Simulation Statistics' "$BUILD/m5out-stats-$1/stats.txt
 # counts <program> <dump>: rows in, instructions issued, rows popped, pushes committed at the systolic array
 counts() {
   echo "$(stat "$1" "$2" vcix.systolic.input.admitted) $(stat "$1" "$2" vcix.systolic.issue.admitted)" \
-    "$(stat "$1" "$2" vcix.systolic.pop.admitted) $(stat "$1" "$2" vcix.committed::systolic_input_push)"
+    "$(stat "$1" "$2" vcix.systolic.pop.admitted) $(stat "$1" "$2" vcix.committed.systolic_input_push)"
 }
 
 # consistent <program> <dump>: how many of the systolic array's ports have cycles = numCycles and the utilization formula
@@ -69,6 +69,8 @@ report "$(counts markers 3)" "4 2 4 1" \
   "the push after the dump and its pop, then dumpreset: dumped at the marker, not 2000 ns later as a0 asks"
 report "$(counts markers 4)" "8 4 8 2" "two pushes and their pops between two dumpresets, the second also with a0 and a1 set"
 report "$(counts markers 5)" "0 0 0 0" "after the last dumpreset, to the end of the run: nothing"
+report "$(for p in input issue weight_push pop; do printf '%s ' "$(stat markers 2 "vcix.systolic.$p.primary")"; done)" "1 0 0 0 " \
+  "dump 2, right after a reset: each port's primary flag is still printed, 1 only on the input port"
 
 echo "-- utilization"
 on_gem5 rows
