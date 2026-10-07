@@ -29,28 +29,37 @@ class Msa {
     if (entries < 1 || entries > UINT32_MAX)
       throw vcix_accel::ConfigError(QUEUE_KEY, config.get(QUEUE_KEY), "is not a queue size");
     stream_.configure(static_cast<uint32_t>(2 * lanes - 1), static_cast<uint32_t>(entries));
+    pop_.set_capacity(entries);
   }
 
   bool can_accept(const Insn &insn, Cycle now) const {
-    if (now < free_at_) return false;
-    if (is(insn, POP)) return stream_.holds(insn.vl);
+    if (!issue_.room(now)) return false;
+    if (is(insn, POP)) return stream_.holds(insn.vl) && insn.vl <= pop_.room(now);
     if (is_input(insn)) return stream_.has_room(insn.vl);
-    return true;
+    return weight_push_.room(now) != 0;
   }
   Cycle issue(const Insn &insn, Id, Cycle now) {
-    free_at_ = now + 1;
-    if (is(insn, POP))
+    issue_.admit(1, now);
+    if (is(insn, POP)) {
+      pop_.admit(insn.vl, now);
       stream_.pop(insn.vl);
-    else if (is_input(insn))
+    } else if (is_input(insn)) {
       stream_.push(insn.vl);
+    } else {
+      weight_push_.admit(1, now);
+    }
     return 1;
   }
   void commit(const Insn &, Id, Cycle) {}
   void tick(Cycle now) { stream_.tick(now); }
   void reset() {
     stream_.reset();
-    free_at_ = 0;
+    issue_.reset();
+    weight_push_.reset();
+    pop_.reset();
   }
+
+  std::vector<const vcix_accel::Port *> ports() const { return {&stream_.entry(), &issue_, &weight_push_, &pop_}; }
 
   uint32_t input_entries() const { return stream_.input_entries(); }
   uint32_t output_entries() const { return stream_.output_entries(); }
@@ -69,9 +78,11 @@ class Msa {
   static bool is(const Insn &insn, uint32_t match) { return (insn.bits & FORM) == match; }
   static bool is_input(const Insn &insn) { return is(insn, PUSH) && !(vcix_accel::rs1(insn) & WEIGHT); }
 
+  // One row a cycle enters the array, whatever its active width; one instruction a cycle enters the unit.
   Stream stream_{"msa", "input", "rows", vcix_accel::Port::PRIMARY, 255, 256};
-  // The first cycle the unit takes another instruction.
-  Cycle free_at_ = 0;
+  vcix_accel::Port issue_{"msa", "issue", "instructions", 1};
+  vcix_accel::Port weight_push_{"msa", "weight_push", "instructions", 1};
+  vcix_accel::Port pop_{"msa", "pop", "rows", 256};
 };
 
 }  // namespace tpu

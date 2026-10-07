@@ -21,18 +21,16 @@ class Sfu {
     latency_ = config.uint(LATENCY_KEY, 10);
     if (latency_ == 0) throw vcix_accel::ConfigError(LATENCY_KEY, "0", "is not a pipeline depth: at least 1");
   }
-  bool can_accept(const vcix_accel::Insn &, vcix_accel::Cycle now) const { return !entered_ || now > last_entry_; }
+  bool can_accept(const vcix_accel::Insn &, vcix_accel::Cycle now) const { return entry_.room(now) != 0; }
   vcix_accel::Cycle issue(const vcix_accel::Insn &, vcix_accel::Id, vcix_accel::Cycle now) {
-    entered_ = true;
-    last_entry_ = now;
+    entry_.admit(1, now);
     return latency_;
   }
   void commit(const vcix_accel::Insn &, vcix_accel::Id, vcix_accel::Cycle) {}
   void tick(vcix_accel::Cycle) {}
-  void reset() {
-    entered_ = false;
-    last_entry_ = 0;
-  }
+  void reset() { entry_.reset(); }
+
+  std::vector<const vcix_accel::Port *> ports() const { return {&entry_}; }
 
  private:
   // sf.vc.v.iv on custom-2: opcode, funct3, funct6 and vm; FUNCTION_FIELD adds the field at 19:15.
@@ -49,8 +47,8 @@ class Sfu {
   static constexpr const char *LATENCY_KEY = "tpu_sfu_latency_cycles";
 
   vcix_accel::Cycle latency_ = 10;
-  bool entered_ = false;
-  vcix_accel::Cycle last_entry_ = 0;
+  // One instruction a cycle enters the pipeline.
+  vcix_accel::Port entry_{"sfu", "entry", "instructions", 1, vcix_accel::Port::PRIMARY};
 };
 
 }  // namespace tpu
