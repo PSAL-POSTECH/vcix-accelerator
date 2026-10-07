@@ -245,7 +245,7 @@ void within_capacity() {
   expect(ok && moved, "admitted <= capacity * cycles at every cycle, and cycles is the ticks so far");
 }
 
-// A reset gives the ports their room again within the cycle; each room used again counts, so utilization stays <= 1.
+// A reset gives the ports their room again within the cycle; each room used again counts, so utilized cycles stay <= cycles.
 void reset_reopens_a_room() {
   const vcix_model *m = export_model<Toy<GOOD>>();
   char error[128] = "";
@@ -342,30 +342,30 @@ void the_dump() {
   instance.dump_stats(out);
   fclose(out);
   const char *want =
-      "vcix.pipe.utilization                            0.125000  # issue: admitted / (capacity * cycles)\n"
+      "vcix.pipe.utilized_cycles                        0.500000  # issue: admitted / capacity\n"
       "vcix.pipe.issue.admitted                         1  # instructions\n"
       "vcix.pipe.issue.capacity                         2  # instructions per cycle\n"
       "vcix.pipe.issue.cycles                           4\n"
       "vcix.pipe.issue.occupancy                        0  # instructions held, summed over cycles\n"
       "vcix.pipe.issue.primary                          1\n"
-      "vcix.pipe.issue.utilization                      0.125000\n"
+      "vcix.pipe.issue.utilized_cycles                  0.500000\n"
       "vcix.pipe.lanes.admitted                         4  # elements\n"
       "vcix.pipe.lanes.capacity                         8  # elements per cycle\n"
       "vcix.pipe.lanes.cycles                           4\n"
       "vcix.pipe.lanes.occupancy                        0  # elements held, summed over cycles\n"
       "vcix.pipe.lanes.primary                          0\n"
-      "vcix.pipe.lanes.utilization                      0.125000\n"
-      "vcix.array.utilization                           0.500000  # entry: admitted / (capacity * cycles)\n"
+      "vcix.pipe.lanes.utilized_cycles                  0.500000\n"
+      "vcix.array.utilized_cycles                       2.000000  # entry: admitted / capacity\n"
       "vcix.array.entry.admitted                        2  # rows\n"
       "vcix.array.entry.capacity                        1  # rows per cycle\n"
       "vcix.array.entry.cycles                          4\n"
       "vcix.array.entry.occupancy                       5  # rows held, summed over cycles\n"
       "vcix.array.entry.primary                         1\n"
-      "vcix.array.entry.utilization                     0.500000\n"
+      "vcix.array.entry.utilized_cycles                 2.000000\n"
       "vcix.committed.op                                1\n"
       "vcix.committed.array_push                        1\n"
       "vcix.committed.pop                               0\n";
-  expect(std::string(text) == want, "dump_stats prints the gem5 names, the primary port's utilization per unit first");
+  expect(std::string(text) == want, "dump_stats prints the gem5 names, the primary port's utilized cycles per unit first");
   if (std::string(text) != want) printf("%s", text);
 }
 
