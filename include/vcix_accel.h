@@ -105,7 +105,7 @@ typedef struct vcix_model {
   /* Back to the state create left, statistics aside. May be NULL. */
   void (*reset)(void *self);
 
-  /* The statistics of an instance, asked after create; each may be NULL, and NULL num_stats means none. */
+  /* The statistics of an instance, asked after create. NULL num_stats means none; else stat and read_stats are set. */
   size_t (*num_stats)(void *self);
   /* Entry i < num_stats, the same for the instance's life; NULL past the end. */
   const vcix_stat *(*stat)(void *self, size_t i);
