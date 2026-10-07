@@ -34,6 +34,7 @@ class MinorVecAdder(MinorFU):
         ]
     )
     opLat = 1
+    unit = "vpu"
 
 class MinorVecMultiplier(MinorFU):
     opClasses = minorMakeOpClassSet(
@@ -54,6 +55,7 @@ class MinorVecMultiplier(MinorFU):
         ]
     )
     opLat = 1
+    unit = "vpu"
 
 class MinorVecDivider(MinorFU):
     opClasses = minorMakeOpClassSet(
@@ -63,6 +65,7 @@ class MinorVecDivider(MinorFU):
         ]
     )
     opLat = 1
+    unit = "vpu"
 
 class MinorVecReduce(MinorFU):
     opClasses = minorMakeOpClassSet(
@@ -75,6 +78,7 @@ class MinorVecReduce(MinorFU):
         ]
     )
     opLat = 1
+    unit = "vpu"
 
 class MinorVecLdStore(MinorFU):
     opClasses = minorMakeOpClassSet(
