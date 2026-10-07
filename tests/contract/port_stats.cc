@@ -64,7 +64,7 @@ class Toy : public Model {
     array_.reset();
   }
   std::vector<const Port *> ports() const override {
-    if (V == LISTED_TWICE) return {&issue_, &lanes_, &array_.entry(), &lanes_};
+    if (V == LISTED_TWICE) return {&issue_, &lanes_, &array_.entry(), &issue_};
     return {&issue_, &lanes_, &array_.entry()};
   }
 
@@ -195,20 +195,20 @@ void the_list() {
   char error[128] = "";
   void *self = m->create(&NO_CONFIG, error, sizeof error);
   const size_t n = m->num_stats(self);
-  bool ok = n == 3 * 4 + 3 && m->stat(self, n) == nullptr;
-  const char *units[] = {"pipe", "pipe", "array"}, *names[] = {"issue", "lanes", "entry"};
-  const uint32_t primaries[] = {1, 0, 1};
-  for (size_t p = 0; ok && p < 3; p++)
+  bool ok = n == 2 * 4 + 3 && m->stat(self, n) == nullptr;
+  const char *units[] = {"pipe", "array"}, *names[] = {"issue", "entry"};
+  for (size_t u = 0; ok && u < 2; u++)
     for (uint32_t k = 0; k < 4; k++) {
-      const vcix_stat *s = m->stat(self, 4 * p + k);
-      ok = ok && !strcmp(s->unit, units[p]) && !strcmp(s->name, names[p]) && s->kind == k && s->primary == primaries[p];
+      const vcix_stat *s = m->stat(self, 4 * u + k);
+      ok = ok && !strcmp(s->unit, units[u]) && !strcmp(s->name, names[u]) && s->kind == k;
     }
   const char *encodings[] = {"op", "array push", "pop"};
   for (size_t i = 0; ok && i < 3; i++) {
-    const vcix_stat *s = m->stat(self, 12 + i);
-    ok = !strcmp(s->unit, "committed") && !strcmp(s->name, encodings[i]) && s->kind == VCIX_STAT_COUNT && !s->primary;
+    const vcix_stat *s = m->stat(self, 8 + i);
+    ok = !strcmp(s->unit, "committed") && !strcmp(s->name, encodings[i]) && s->kind == VCIX_STAT_COUNT;
   }
-  expect(ok, "the list: per port ADMITTED, CAPACITY, CYCLES, OCCUPANCY with its primary flag, then a COUNT per encoding");
+  expect(ok, "the list: per unit ADMITTED, CAPACITY, CYCLES, OCCUPANCY at its primary port, no other port, then a COUNT "
+             "per encoding");
   m->destroy(self);
 
   const auto refused = [](const vcix_model *t, const char *why) {
@@ -219,18 +219,26 @@ void the_list() {
   };
   expect(refused(export_model<Toy<NO_PRIMARY>>(), "unit pipe has 0 primary ports, not one") &&
              refused(export_model<Toy<TWO_PRIMARIES>>(), "unit pipe has 2 primary ports, not one") &&
-             refused(export_model<Toy<SAME_NAME>>(), "two ports are named pipe.issue") &&
-             refused(export_model<Toy<LISTED_TWICE>>(), "two ports are named pipe.lanes") &&
+             refused(export_model<Toy<LISTED_TWICE>>(), "unit pipe has 2 primary ports, not one") &&
              refused(export_model<Toy<NAMED_COMMITTED>>(),
                      "a port's unit is named 'committed', the name of the commit counts"),
-         "create refuses a unit without one primary port, two ports of one name, one port listed twice, and a unit named "
-         "committed");
+         "create refuses a unit without one primary port, a primary port listed twice, and a unit named committed");
   expect(refused(export_model<Toy<CLASHING_UNITS>>(), "units pi.pe and pi_pe are both pi_pe as statistics") &&
-             refused(export_model<Toy<CLASHING_PORTS>>(),
-                     "ports pipe.la.nes and pipe.la_nes are both pipe.la_nes as statistics") &&
              refused(export_model<Toy<CLASHING_ENCODINGS>>(),
                      "encodings 'array push' and 'array_push' are both committed.array_push as statistics"),
-         "create refuses two units, two ports or two encodings whose names differ only where stat_name() prints '_'");
+         "create refuses two units or two encodings whose names differ only where stat_name() prints '_'");
+  const auto listed = [](const vcix_model *t) {
+    char e[128] = "";
+    void *s = t->create(&NO_CONFIG, e, sizeof e);
+    if (!s) return std::string("refused: ") + e;
+    std::string units;
+    for (size_t i = 0; i < t->num_stats(s); i++) units += std::string(t->stat(s, i)->unit) + " ";
+    t->destroy(s);
+    return units;
+  };
+  const std::string good = listed(export_model<Toy<GOOD>>());
+  expect(listed(export_model<Toy<SAME_NAME>>()) == good && listed(export_model<Toy<CLASHING_PORTS>>()) == good,
+         "a port that is no statistic may share its unit's primary port's name, as written or as stat_name() prints it");
 }
 
 void within_capacity() {
@@ -239,8 +247,8 @@ void within_capacity() {
   for (int c = 0; c < 3000; c++) {
     d.cycle();
     const std::vector<uint64_t> v = read(d.m, d.self);
-    for (size_t p = 0; p < 3; p++) ok = ok && v[4 * p] <= v[4 * p + 1] * v[4 * p + 2] && v[4 * p + 2] == d.now;
-    moved = moved || (v[0] && v[4] && v[8] && v[11]);
+    for (size_t u = 0; u < 2; u++) ok = ok && v[4 * u] <= v[4 * u + 1] * v[4 * u + 2] && v[4 * u + 2] == d.now;
+    moved = moved || (v[0] && v[4] && v[7]);
   }
   expect(ok && moved, "admitted <= capacity * cycles at every cycle, and cycles is the ticks so far");
 }
@@ -266,7 +274,7 @@ void reset_reopens_a_room() {
   if (m->can_accept(self, &op, 2)) m->issue(self, &op, ++accepted, 2);
   const std::vector<uint64_t> v = read(m, self);
   m->destroy(self);
-  expect(accepted == 11 && v[0] == 11 && v[1] == 2 && v[2] == 6 && v[4] == 44 && v[5] == 8 && v[6] == 6 && v[10] == 2,
+  expect(accepted == 11 && v[0] == 11 && v[1] == 2 && v[2] == 6 && v[6] == 2,
          "issue, reset and issue again in one cycle: 10 admitted at 2 a cycle reads 5 cycles there, a reset with "
          "nothing admitted adds none, and admitted <= capacity * cycles");
   if (!(v[0] == 11 && v[2] == 6)) printf("accepted %d admitted %llu cycles %llu\n", accepted, (unsigned long long)v[0],
@@ -307,7 +315,7 @@ void registration_follows_copies() {
   instance.model = copy;
   std::vector<uint64_t> values(instance.stats().size());
   instance.read_stats(values.data());
-  expect(inside(instance.model) && inside(copy) && values[0] == 1 && values[4] == 5,
+  expect(inside(instance.model) && inside(copy) && values[0] == 1 && instance.model.ports()[1]->admitted() == 5,
          "after a copy-assignment the ports are the live model's, and the counts are the copy's");
 }
 
@@ -342,30 +350,20 @@ void the_dump() {
   instance.dump_stats(out);
   fclose(out);
   const char *want =
-      "vcix.pipe.utilized_cycles                        0.500000  # issue: admitted / capacity\n"
-      "vcix.pipe.issue.admitted                         1  # instructions\n"
-      "vcix.pipe.issue.capacity                         2  # instructions per cycle\n"
-      "vcix.pipe.issue.cycles                           4\n"
-      "vcix.pipe.issue.occupancy                        0  # instructions held, summed over cycles\n"
-      "vcix.pipe.issue.primary                          1\n"
-      "vcix.pipe.issue.utilized_cycles                  0.500000\n"
-      "vcix.pipe.lanes.admitted                         4  # elements\n"
-      "vcix.pipe.lanes.capacity                         8  # elements per cycle\n"
-      "vcix.pipe.lanes.cycles                           4\n"
-      "vcix.pipe.lanes.occupancy                        0  # elements held, summed over cycles\n"
-      "vcix.pipe.lanes.primary                          0\n"
-      "vcix.pipe.lanes.utilized_cycles                  0.500000\n"
-      "vcix.array.utilized_cycles                       2.000000  # entry: admitted / capacity\n"
-      "vcix.array.entry.admitted                        2  # rows\n"
-      "vcix.array.entry.capacity                        1  # rows per cycle\n"
-      "vcix.array.entry.cycles                          4\n"
-      "vcix.array.entry.occupancy                       5  # rows held, summed over cycles\n"
-      "vcix.array.entry.primary                         1\n"
-      "vcix.array.entry.utilized_cycles                 2.000000\n"
+      "vcix.pipe.admitted                               1  # instructions admitted at port issue\n"
+      "vcix.pipe.capacity                               2  # instructions per cycle\n"
+      "vcix.pipe.cycles                                 4\n"
+      "vcix.pipe.occupancy                              0  # instructions held, summed over cycles\n"
+      "vcix.pipe.utilized_cycles                        0.500000  # admitted / capacity\n"
+      "vcix.array.admitted                              2  # rows admitted at port entry\n"
+      "vcix.array.capacity                              1  # rows per cycle\n"
+      "vcix.array.cycles                                4\n"
+      "vcix.array.occupancy                             5  # rows held, summed over cycles\n"
+      "vcix.array.utilized_cycles                       2.000000  # admitted / capacity\n"
       "vcix.committed.op                                1\n"
       "vcix.committed.array_push                        1\n"
       "vcix.committed.pop                               0\n";
-  expect(std::string(text) == want, "dump_stats prints the gem5 names, the primary port's utilized cycles per unit first");
+  expect(std::string(text) == want, "dump_stats prints the gem5 names: each unit's statistics at its primary port, then the commits");
   if (std::string(text) != want) printf("%s", text);
 }
 

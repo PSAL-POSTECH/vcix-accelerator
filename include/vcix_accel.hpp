@@ -14,6 +14,7 @@
 #include <string>
 #include <system_error>
 #include <type_traits>
+#include <utility>
 #include <vector>
 
 #include "vcix_accel.h"
@@ -254,6 +255,7 @@ class Model {
   virtual void reset() {}
 
   // The ports that decide its timing, one PRIMARY per unit, the same list each time. Asked anew: keep no pointer.
+  // Only each unit's PRIMARY port is a statistic; the others only time.
   virtual std::vector<const Port *> ports() const { return {}; }
   // Cycles ticked since create, the ticks replayed after a squash included.
   uint64_t cycles() const { return cycles_; }
@@ -329,54 +331,43 @@ class Instance {
   }
 
   const std::vector<vcix_stat> &stats() const { return stats_; }
-  // Each port's ADMITTED, CAPACITY, CYCLES and OCCUPANCY in the order of ports(), then each encoding's commits.
-  // A port's CYCLES is the ticks plus its reopened() rooms, so its utilized cycles cannot exceed its CYCLES.
+  // Each unit's ADMITTED, CAPACITY, CYCLES and OCCUPANCY at its primary port, units in the order of their primary
+  // ports in ports(), then each encoding's commits. CYCLES is the ticks plus the port's reopened() rooms.
   void read_stats(uint64_t *values) const {
     const std::vector<const Port *> ports = model.ports();
-    if (ports.size() != num_ports_) broken("ports() changed its length since create");
-    for (size_t p = 0; p < ports.size(); p++) {
-      const vcix_stat &described = stats_[PER_PORT * p];
-      if (std::strcmp(ports[p]->unit(), described.unit) || std::strcmp(ports[p]->name(), described.name))
+    if (ports.size() != listed_.size()) broken("ports() changed its length since create");
+    for (size_t p = 0; p < ports.size(); p++)
+      if (std::strcmp(ports[p]->unit(), listed_[p].first) || std::strcmp(ports[p]->name(), listed_[p].second))
         broken("ports() changed its order since create");
-      values[PER_PORT * p] = ports[p]->admitted();
-      values[PER_PORT * p + 1] = ports[p]->capacity();
-      values[PER_PORT * p + 2] = model.cycles() + ports[p]->reopened();
-      values[PER_PORT * p + 3] = ports[p]->occupancy();
+    for (size_t u = 0; u < primary_.size(); u++) {
+      const Port *port = ports[primary_[u]];
+      values[PER_UNIT * u] = port->admitted();
+      values[PER_UNIT * u + 1] = port->capacity();
+      values[PER_UNIT * u + 2] = model.cycles() + port->reopened();
+      values[PER_UNIT * u + 3] = port->occupancy();
     }
-    for (size_t i = 0; i < committed_.size(); i++) values[PER_PORT * num_ports_ + i] = committed_[i];
+    for (size_t i = 0; i < committed_.size(); i++) values[PER_UNIT * primary_.size() + i] = committed_[i];
   }
-  // The values as gem5 names them: vcix.<unit>.<port>.<stat>, vcix.<unit>.utilized_cycles, vcix.committed.<encoding>.
+  // The values as gem5 names them: vcix.<unit>.<stat>, vcix.<unit>.utilized_cycles, vcix.committed.<encoding>.
   void dump_stats(FILE *out) const {
     std::vector<uint64_t> values(stats_.size());
     read_stats(values.data());
-    std::vector<std::string> units;
-    for (size_t p = 0; p < num_ports_; p++) {
-      const std::string unit = stat_name(stats_[PER_PORT * p].unit);
-      bool seen = false;
-      for (const std::string &u : units) seen = seen || u == unit;
-      if (!seen) units.push_back(unit);
+    for (size_t u = 0; u < primary_.size(); u++) {
+      const vcix_stat *unit = &stats_[PER_UNIT * u];
+      const uint64_t *v = &values[PER_UNIT * u];
+      const std::string at = "vcix." + stat_name(unit->unit) + ".";
+      std::fprintf(out, "%-48s %" PRIu64 "  # %s admitted at port %s\n", (at + "admitted").c_str(), v[0],
+                   unit->unit_of_work, unit->name);
+      std::fprintf(out, "%-48s %" PRIu64 "  # %s per cycle\n", (at + "capacity").c_str(), v[1], unit->unit_of_work);
+      std::fprintf(out, "%-48s %" PRIu64 "\n", (at + "cycles").c_str(), v[2]);
+      std::fprintf(out, "%-48s %" PRIu64 "  # %s held, summed over cycles\n", (at + "occupancy").c_str(), v[3],
+                   unit->unit_of_work);
+      std::fprintf(out, "%-48s %f  # admitted / capacity\n", (at + "utilized_cycles").c_str(),
+                   double(v[0]) / double(v[1]));
     }
-    for (const std::string &unit : units)
-      for (size_t p = 0; p < num_ports_; p++) {
-        const vcix_stat *port = &stats_[PER_PORT * p];
-        if (stat_name(port->unit) != unit) continue;
-        const uint64_t *v = &values[PER_PORT * p];
-        const double utilized_cycles = double(v[0]) / double(v[1]);
-        const std::string at = "vcix." + unit + "." + stat_name(port->name) + ".";
-        if (port->primary)
-          std::fprintf(out, "%-48s %f  # %s: admitted / capacity\n", ("vcix." + unit + ".utilized_cycles").c_str(),
-                       utilized_cycles, port->name);
-        std::fprintf(out, "%-48s %" PRIu64 "  # %s\n", (at + "admitted").c_str(), v[0], port->unit_of_work);
-        std::fprintf(out, "%-48s %" PRIu64 "  # %s per cycle\n", (at + "capacity").c_str(), v[1], port->unit_of_work);
-        std::fprintf(out, "%-48s %" PRIu64 "\n", (at + "cycles").c_str(), v[2]);
-        std::fprintf(out, "%-48s %" PRIu64 "  # %s held, summed over cycles\n", (at + "occupancy").c_str(), v[3],
-                     port->unit_of_work);
-        std::fprintf(out, "%-48s %u\n", (at + "primary").c_str(), port->primary ? 1u : 0u);
-        std::fprintf(out, "%-48s %f\n", (at + "utilized_cycles").c_str(), utilized_cycles);
-      }
     for (size_t i = 0; i < committed_.size(); i++)
-      std::fprintf(out, "%-48s %" PRIu64 "\n", ("vcix.committed." + stat_name(stats_[PER_PORT * num_ports_ + i].name)).c_str(),
-                   values[PER_PORT * num_ports_ + i]);
+      std::fprintf(out, "%-48s %" PRIu64 "\n", ("vcix.committed." + stat_name(stats_[PER_UNIT * primary_.size() + i].name)).c_str(),
+                   values[PER_UNIT * primary_.size() + i]);
   }
   // A name as a gem5 statistic: each character outside [A-Za-z0-9_] becomes '_'.
   static std::string stat_name(const char *name) {
@@ -387,44 +378,43 @@ class Instance {
   }
 
  private:
-  static constexpr size_t PER_PORT = 4;
+  static constexpr size_t PER_UNIT = 4;
 
   [[noreturn]] static void broken(const char *why) {
     std::fprintf(stderr, "vcix_accel: %s\n", why);
     std::abort();
   }
   const char *keep(const char *text) { return strings_.emplace_back(text).c_str(); }
-  // Fixes the stat list; names are checked as stat_name() prints them, so two names never meet in one statistic.
+  // Fixes the stat list from each unit's one primary port; units and encodings are checked as stat_name() prints them.
   void describe() {
     stats_.clear();
     strings_.clear();
+    listed_.clear();
+    primary_.clear();
     const std::vector<const Port *> ports = model.ports();
-    num_ports_ = ports.size();
     for (size_t i = 0; i < ports.size(); i++) {
       const Port *port = ports[i];
-      const std::string unit = stat_name(port->unit()), name = stat_name(port->name());
+      const std::string unit = stat_name(port->unit());
       if (unit == "committed")
         throw std::invalid_argument("a port's unit is named 'committed', the name of the commit counts");
       size_t primaries = 0;
-      for (size_t j = 0; j < ports.size(); j++) {
-        const Port *other = ports[j];
+      for (const Port *other : ports) {
         if (stat_name(other->unit()) != unit) continue;
         if (std::strcmp(other->unit(), port->unit()))
           throw std::invalid_argument(std::string("units ") + port->unit() + " and " + other->unit() + " are both " +
                                       unit + " as statistics");
         primaries += other->primary();
-        if (j == i || stat_name(other->name()) != name) continue;
-        if (!std::strcmp(other->name(), port->name()))
-          throw std::invalid_argument(std::string("two ports are named ") + port->unit() + "." + port->name());
-        throw std::invalid_argument(std::string("ports ") + port->unit() + "." + port->name() + " and " + other->unit() +
-                                    "." + other->name() + " are both " + unit + "." + name + " as statistics");
       }
       if (primaries != 1)
         throw std::invalid_argument(std::string("unit ") + port->unit() + " has " + std::to_string(primaries) +
                                     " primary ports, not one");
-      const char *unit_kept = keep(port->unit()), *name_kept = keep(port->name()), *work = keep(port->unit_of_work());
+      const char *unit_kept = keep(port->unit()), *name_kept = keep(port->name());
+      listed_.push_back({unit_kept, name_kept});
+      if (!port->primary()) continue;
+      primary_.push_back(i);
+      const char *work = keep(port->unit_of_work());
       for (uint32_t kind : {VCIX_STAT_ADMITTED, VCIX_STAT_CAPACITY, VCIX_STAT_CYCLES, VCIX_STAT_OCCUPANCY})
-        stats_.push_back({unit_kept, name_kept, work, kind, port->primary() ? 1u : 0u});
+        stats_.push_back({unit_kept, name_kept, work, kind});
     }
     for (size_t i = 0; i < encodings_.size(); i++)
       for (size_t j = 0; j < i; j++)
@@ -432,12 +422,13 @@ class Instance {
           throw std::invalid_argument(std::string("encodings '") + encodings_[j].name + "' and '" + encodings_[i].name +
                                       "' are both committed." + stat_name(encodings_[i].name) + " as statistics");
     const char *committed = keep("committed"), *instructions = keep("instructions");
-    for (const Encoding &e : encodings_) stats_.push_back({committed, keep(e.name), instructions, VCIX_STAT_COUNT, 0});
+    for (const Encoding &e : encodings_) stats_.push_back({committed, keep(e.name), instructions, VCIX_STAT_COUNT});
   }
 
   std::vector<Encoding> encodings_;
   std::vector<uint64_t> committed_;
-  size_t num_ports_ = 0;
+  std::vector<std::pair<const char *, const char *>> listed_;
+  std::vector<size_t> primary_;
   std::vector<vcix_stat> stats_;
   std::deque<std::string> strings_;
 

@@ -180,9 +180,9 @@ for name in vlane_idx compute dma_config_desc mvin mvin2 mvin3 mvout; do
 done
 report "exit ${rc[machine-misc]}, at most and in all $(misc_per_cycle machine-misc)" "exit 0, at most and in all 2 7" \
   "script_systolic.py issues one_cycle.S's seven tpu::Misc instructions at most two a cycle, though the CPU issues 12"
-report "primary $(machine_stat machine-misc misc.issue.primary), capacity $(machine_stat machine-misc misc.issue.capacity), admitted $(machine_stat machine-misc misc.issue.admitted) of $committed committed" \
-  "primary 1, capacity 2, admitted 7 of 7 committed" \
-  "misc.issue is the unit's primary port, 2 a cycle, and admits each committed custom-2 and DMA instruction of tpu::Misc once"
+report "capacity $(machine_stat machine-misc misc.capacity), admitted $(machine_stat machine-misc misc.admitted) of $committed committed" \
+  "capacity 2, admitted 7 of 7 committed" \
+  "misc, at its primary port issue, takes 2 a cycle and admits each committed custom-2 and DMA instruction of tpu::Misc once"
 
 printf 'tpu_trace: 1\ntpu_misc_issue_width: 3\n' > "$BUILD/tpu-misc-3.yml"
 printf 'tpu_misc_issue_width: 0\n' > "$BUILD/tpu-misc-0.yml"
@@ -192,7 +192,7 @@ for width in 3 0; do
     > "$BUILD/tpu-machine-misc-$width.gem5.log" 2>&1
   rc[machine-misc-$width]=$?
 done
-report "exit ${rc[machine-misc-3]}, capacity $(machine_stat machine-misc-3 misc.issue.capacity), at most and in all $(misc_per_cycle machine-misc-3)" \
+report "exit ${rc[machine-misc-3]}, capacity $(machine_stat machine-misc-3 misc.capacity), at most and in all $(misc_per_cycle machine-misc-3)" \
   "exit 0, capacity 3, at most and in all 3 7" "gem5 follows tpu_misc_issue_width: 3 from the machine description"
 why=$(grep -Fc "tpu: machine description: tpu_misc_issue_width: '0' is not an issue width: at least 1" \
   "$BUILD/tpu-machine-misc-0.gem5.log")
