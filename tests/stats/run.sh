@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The tpu model's unit statistics in gem5's dumps: m5op windows, their boundaries, and utilized cycles. gem5 only.
+# The tpu model's unit statistics in gem5's dumps: m5op windows, their boundaries, and utilized cycles; the vector unit's busy cycles. gem5 only.
 # Usage: tests/stats/run.sh [build-dir [spike [pk [gem5.opt]]]]
 set -uo pipefail
 HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -15,6 +15,13 @@ report() {
 on_gem5() {
   gem5_run "$BUILD/m5out-stats-$1" "$BUILD/libtpu.so" "$HERE/../tpu/systolic.yml" "$BUILD/stats-$1" \
     --max-ticks 100000000 > "$BUILD/stats-$1.gem5.log" 2>&1
+  rc[$1]=$?
+}
+
+# on_vpu <program>: runs it on examples/tpu/gem5/script_systolic.py, the tpu machine whose vector FUs are the unit vpu
+on_vpu() {
+  timeout 300 "$GEM5" -d "$BUILD/m5out-stats-$1" "$REPO/examples/tpu/gem5/script_systolic.py" -c "$BUILD/stats-$1" \
+    --model "$BUILD/libtpu.so" --machine-config "$HERE/../tpu/systolic.yml" > "$BUILD/stats-$1.gem5.log" 2>&1
   rc[$1]=$?
 }
 
@@ -58,7 +65,17 @@ beyond_units() {
     "$BUILD/m5out-stats-$1/stats.txt"
 }
 
-for program in markers rows; do
+# vpu <program> <dump>: the vector unit's busy cycles, its capacity, and whether its cycles is numCycles and its
+# utilized_cycles admitted / capacity
+vpu() {
+  local admitted=$(stat "$1" "$2" system.cpu.units.vpu.admitted) capacity=$(stat "$1" "$2" system.cpu.units.vpu.capacity)
+  local agree=no
+  [ "$(stat "$1" "$2" system.cpu.units.vpu.cycles)" = "$(stat "$1" "$2" system.cpu.numCycles)" ] &&
+    [ "$(stat "$1" "$2" system.cpu.units.vpu.utilized_cycles)" = "$admitted" ] && agree=agree
+  echo "$admitted $capacity $agree"
+}
+
+for program in markers rows vpu; do
   rv_program "$HERE/$program.S" "$BUILD/stats-$program" || { echo "FAIL  $program.S does not build"; exit 2; }
 done
 
@@ -92,5 +109,15 @@ report "rows $(stat rows 2 vcix.systolic.admitted), $(utilized rows 2), $(utiliz
 for dump in 1 2; do
   report "$(consistent rows $dump) of 5" "5 of 5" "rows, dump $dump: each unit's cycles and utilized_cycles agree"
 done
+
+echo "-- vector unit busy cycles"
+on_vpu vpu
+report "exit ${rc[vpu]}, dumps $(dumps vpu)" "exit 0, dumps 4" "three windows and the end of the run"
+report "$(vpu vpu 1)" "8 1 agree" "eight vector adds, each alone: eight busy cycles at capacity 1"
+report "$(vpu vpu 2)" "0 1 agree" "scalar adds only: no busy cycle"
+report "$(vpu vpu 3)" "2 1 agree" "eight independent vector adds on the four MinorVecAdders: two busy cycles"
+report "$(vpu vpu 4)" "2 1 agree" "no reset after dump 3: the end of the run carries its window on"
+report "$(grep -c '\.units\.' "$BUILD/m5out-stats-markers/stats.txt")" "0" \
+  "gem5_se.py's pool tags no FU with a unit: no units statistics"
 
 exit $failed
