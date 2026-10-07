@@ -79,10 +79,10 @@ class Msa {
   static bool is(const Insn &insn, uint32_t match) { return (insn.bits & FORM) == match; }
   static bool is_input(const Insn &insn) { return is(insn, PUSH) && !(vcix_accel::rs1(insn) & WEIGHT); }
 
-  Stream stream_{"msa", "input", "rows", vcix_accel::Port::PRIMARY, 255, 256};
-  vcix_accel::Port issue_{"msa", "issue", "instructions", 1};
-  vcix_accel::Port weight_push_{"msa", "weight_push", "instructions", 1};
-  vcix_accel::Port pop_{"msa", "pop", "rows", 256};
+  Stream stream_{"Msa", "input", "rows", vcix_accel::Port::PRIMARY, 255, 256};
+  vcix_accel::Port issue_{"Msa", "issue", "instructions", 1};
+  vcix_accel::Port weight_push_{"Msa", "weight_push", "instructions", 1};
+  vcix_accel::Port pop_{"Msa", "pop", "rows", 256};
 };
 
 }  // namespace tpu

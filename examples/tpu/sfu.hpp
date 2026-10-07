@@ -47,7 +47,7 @@ class Sfu {
   static constexpr const char *LATENCY_KEY = "tpu_sfu_latency_cycles";
 
   vcix_accel::Cycle latency_ = 10;
-  vcix_accel::Port entry_{"sfu", "entry", "instructions", 1, vcix_accel::Port::PRIMARY};
+  vcix_accel::Port entry_{"Sfu", "entry", "instructions", 1, vcix_accel::Port::PRIMARY};
 };
 
 }  // namespace tpu

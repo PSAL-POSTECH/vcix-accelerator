@@ -82,10 +82,10 @@ class Systolic {
 
   static bool is(const Insn &insn, uint32_t match) { return (insn.bits & FORM) == match; }
 
-  Stream stream_{"systolic", "input", "rows", vcix_accel::Port::PRIMARY, 255, 256};
-  vcix_accel::Port issue_{"systolic", "issue", "instructions", 1};
-  vcix_accel::Port weight_push_{"systolic", "weight_push", "instructions", 1};
-  vcix_accel::Port pop_{"systolic", "pop", "rows", 256};
+  Stream stream_{"Systolic", "input", "rows", vcix_accel::Port::PRIMARY, 255, 256};
+  vcix_accel::Port issue_{"Systolic", "issue", "instructions", 1};
+  vcix_accel::Port weight_push_{"Systolic", "weight_push", "instructions", 1};
+  vcix_accel::Port pop_{"Systolic", "pop", "rows", 256};
 };
 
 }  // namespace tpu

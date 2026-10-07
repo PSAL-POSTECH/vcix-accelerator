@@ -36,7 +36,7 @@ dumps() { grep -c 'Begin Simulation Statistics' "$BUILD/m5out-stats-$1/stats.txt
 
 # counts <program> <dump>: rows in at the systolic array, its input pushes and its pops committed
 counts() {
-  echo "$(stat "$1" "$2" vcix.systolic.admitted) $(stat "$1" "$2" vcix.committed.systolic_input_push)" \
+  echo "$(stat "$1" "$2" vcix.Systolic.admitted) $(stat "$1" "$2" vcix.committed.systolic_input_push)" \
     "$(stat "$1" "$2" vcix.committed.systolic_pop)"
 }
 
@@ -44,7 +44,7 @@ counts() {
 consistent() {
   local unit admitted capacity cycles utilized agree=0
   local num_cycles=$(stat "$1" "$2" system.cpu.numCycles)
-  for unit in sfu misc systolic xlu msa; do
+  for unit in Sfu Misc Systolic Xlu Msa; do
     admitted=$(stat "$1" "$2" "vcix.$unit.admitted")
     capacity=$(stat "$1" "$2" "vcix.$unit.capacity")
     cycles=$(stat "$1" "$2" "vcix.$unit.cycles")
@@ -57,7 +57,7 @@ consistent() {
 }
 
 # utilized <program> <dump>: the systolic array's utilized cycles, as a number
-utilized() { printf '%g' "$(stat "$1" "$2" vcix.systolic.utilized_cycles)"; }
+utilized() { printf '%g' "$(stat "$1" "$2" vcix.Systolic.utilized_cycles)"; }
 
 # beyond_units <program>: vcix lines in any dump that are neither vcix.<unit>.<stat> nor vcix.committed.<encoding>
 beyond_units() {
@@ -68,10 +68,10 @@ beyond_units() {
 # vpu <program> <dump>: the vector unit's busy cycles, its capacity, and whether its cycles is numCycles and its
 # utilized_cycles admitted / capacity
 vpu() {
-  local admitted=$(stat "$1" "$2" system.cpu.units.vpu.admitted) capacity=$(stat "$1" "$2" system.cpu.units.vpu.capacity)
+  local admitted=$(stat "$1" "$2" system.cpu.units.Vpu.admitted) capacity=$(stat "$1" "$2" system.cpu.units.Vpu.capacity)
   local agree=no
-  [ "$(stat "$1" "$2" system.cpu.units.vpu.cycles)" = "$(stat "$1" "$2" system.cpu.numCycles)" ] &&
-    [ "$(stat "$1" "$2" system.cpu.units.vpu.utilized_cycles)" = "$admitted" ] && agree=agree
+  [ "$(stat "$1" "$2" system.cpu.units.Vpu.cycles)" = "$(stat "$1" "$2" system.cpu.numCycles)" ] &&
+    [ "$(stat "$1" "$2" system.cpu.units.Vpu.utilized_cycles)" = "$admitted" ] && agree=agree
   echo "$admitted $capacity $agree"
 }
 
@@ -96,15 +96,15 @@ report "$(counts markers 5)" "0 0 0" "after the last dumpreset, to the end of th
 report "$(utilized markers 1)" "12" "dump 1 in utilized cycles: 12 rows at 1 a cycle"
 report "$(for d in 1 2 3 4 5; do utilized markers $d; echo; done | awk '{ s += $1 } END { printf "%g", s }')" "24" \
   "the five dumps' utilized cycles add up to the run's: 24 rows in"
-report "$(beyond_units markers), $(stat markers 2 vcix.systolic.capacity)" "0, 1" \
+report "$(beyond_units markers), $(stat markers 2 vcix.Systolic.capacity)" "0, 1" \
   "only units and commit counts are printed, no port and no primary flag; dump 2, right after a reset, still has the capacity"
 
 echo "-- utilized cycles"
 on_gem5 rows
-report "exit ${rc[rows]}, rows $(stat rows 1 vcix.systolic.admitted), $(utilized rows 1)" "exit 0, rows 1, 1" \
+report "exit ${rc[rows]}, rows $(stat rows 1 vcix.Systolic.admitted), $(utilized rows 1)" "exit 0, rows 1, 1" \
   "one row alone in its window: one utilized cycle at the systolic array"
 window=$(stat rows 2 system.cpu.numCycles)
-report "rows $(stat rows 2 vcix.systolic.admitted), $(utilized rows 2), $(utilized rows 2 | awk -v y="$window" '{ print ($1 <= y) ? "within" : "beyond" }')" \
+report "rows $(stat rows 2 vcix.Systolic.admitted), $(utilized rows 2), $(utilized rows 2 | awk -v y="$window" '{ print ($1 <= y) ? "within" : "beyond" }')" \
   "rows 64, 64, within" "64 rows back to back: 64 utilized cycles, never more than the window's $window cycles"
 for dump in 1 2; do
   report "$(consistent rows $dump) of 5" "5 of 5" "rows, dump $dump: each unit's cycles and utilized_cycles agree"
