@@ -90,6 +90,12 @@ ended 0
 line 1 "vcix_accel: the model cannot be made: no such unit can be built"
 verdict "direct: every check above passed, and a constructor that throws says why"
 
+log="$BUILD/port_stats.log"
+"$BUILD/port_stats" > "$log" 2>&1; rc=$?
+grep -E '^(PASS|FAIL)  ' "$log"
+ended 0
+verdict "port_stats: the statistics a model counts at its ports, every check above passed"
+
 probe() { log="$BUILD/probe-$1.log"; "$BUILD/timing_probe" "$BUILD/lib$1.so" $OWNED 2 > "$log" 2>&1; rc=$?; }
 probe no_optional
 ended 0
