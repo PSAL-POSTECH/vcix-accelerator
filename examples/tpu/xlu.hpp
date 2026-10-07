@@ -1,3 +1,4 @@
+// The tpu model's cross-lane unit: one element a cycle enters its delay line, one instruction a cycle the unit.
 #ifndef TPU_XLU_HPP
 #define TPU_XLU_HPP
 
@@ -71,7 +72,6 @@ class Xlu {
   static bool is(const Insn &insn, uint32_t match) { return (insn.bits & FORM) == match; }
   static bool is_push(const Insn &insn) { return is(insn, PUSH) || is(insn, PUSH_PATTERN); }
 
-  // One element a cycle enters the delay line; one instruction a cycle enters the unit.
   Stream stream_{"xlu", "input", "elements", vcix_accel::Port::PRIMARY, DEFAULT_LATENCY, DEFAULT_ENTRIES};
   vcix_accel::Port issue_{"xlu", "issue", "instructions", 1};
 };

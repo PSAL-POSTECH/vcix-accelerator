@@ -1,4 +1,5 @@
 // The tpu model's multi-precision array: the systolic array's queues and delay line, one push for weights and inputs.
+// One row a cycle enters the array, whatever its active width, and one instruction a cycle the unit.
 #ifndef TPU_MSA_HPP
 #define TPU_MSA_HPP
 
@@ -78,7 +79,6 @@ class Msa {
   static bool is(const Insn &insn, uint32_t match) { return (insn.bits & FORM) == match; }
   static bool is_input(const Insn &insn) { return is(insn, PUSH) && !(vcix_accel::rs1(insn) & WEIGHT); }
 
-  // One row a cycle enters the array, whatever its active width; one instruction a cycle enters the unit.
   Stream stream_{"msa", "input", "rows", vcix_accel::Port::PRIMARY, 255, 256};
   vcix_accel::Port issue_{"msa", "issue", "instructions", 1};
   vcix_accel::Port weight_push_{"msa", "weight_push", "instructions", 1};

@@ -1,4 +1,5 @@
 // The tpu model's systolic array: input queue, delay line of width + height - 1, output queue.
+// One row a cycle enters the array and one instruction a cycle the unit; a weight push enters nothing.
 #ifndef TPU_SYSTOLIC_HPP
 #define TPU_SYSTOLIC_HPP
 
@@ -81,7 +82,6 @@ class Systolic {
 
   static bool is(const Insn &insn, uint32_t match) { return (insn.bits & FORM) == match; }
 
-  // One row a cycle enters the array; one instruction a cycle enters the unit. A weight push enters nothing.
   Stream stream_{"systolic", "input", "rows", vcix_accel::Port::PRIMARY, 255, 256};
   vcix_accel::Port issue_{"systolic", "issue", "instructions", 1};
   vcix_accel::Port weight_push_{"systolic", "weight_push", "instructions", 1};

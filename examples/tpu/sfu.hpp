@@ -47,7 +47,6 @@ class Sfu {
   static constexpr const char *LATENCY_KEY = "tpu_sfu_latency_cycles";
 
   vcix_accel::Cycle latency_ = 10;
-  // One instruction a cycle enters the pipeline.
   vcix_accel::Port entry_{"sfu", "entry", "instructions", 1, vcix_accel::Port::PRIMARY};
 };
 
