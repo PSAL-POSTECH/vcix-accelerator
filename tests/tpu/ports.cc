@@ -1,5 +1,5 @@
 // The tpu units' ports, read through the C table with no simulator: cases whose counts can be worked out by hand.
-// A 4 x 4 array (7 slots, queues of 8), a cross-lane unit of 3 slots, a special-function unit of depth 4.
+// A 4 x 4 array (7 slots, queues of 8), a cross-lane unit of 3 slots, a special-function unit of depth 4, misc 2 wide.
 // Usage: tpu_ports libtpu.so
 #include <dlfcn.h>
 
@@ -17,6 +17,7 @@ namespace {
 
 constexpr uint32_t INPUT_PUSH = 0x2200305B, WEIGHT_PUSH = 0x2600305B, POP = 0x0800305B, VEXP = 0x2C00305B;
 constexpr uint32_t XLU_PUSH = 0x2E00305B, MSA_PUSH = 0x2A00305B, MSA_WEIGHT = 0x2A08305B, MSA_POP = 0x0C00305B;
+constexpr uint32_t MVIN = 0x0400302B, VLANE_IDX = 0x0000305B;
 
 const vcix_model *m;
 int failed = 0;
@@ -106,7 +107,8 @@ std::string n(uint64_t v) { return std::to_string(v); }
 // The list: four entries per port in the order the units are asked, a primary for each unit, then the commits.
 void list() {
   Run run;
-  const char *expected[][3] = {{"sfu", "entry", "1"},          {"systolic", "input", "1"}, {"systolic", "issue", "0"},
+  const char *expected[][3] = {{"sfu", "entry", "1"},          {"misc", "issue", "1"},
+                               {"systolic", "input", "1"},     {"systolic", "issue", "0"},
                                {"systolic", "weight_push", "0"}, {"systolic", "pop", "0"},   {"xlu", "input", "1"},
                                {"xlu", "issue", "0"},          {"msa", "input", "1"},      {"msa", "issue", "0"},
                                {"msa", "weight_push", "0"},     {"msa", "pop", "0"}};
@@ -122,7 +124,7 @@ void list() {
     const vcix_stat *s = m->stat(run.self(), 4 * ports + e);
     ok = !strcmp(s->unit, "committed") && !strcmp(s->name, m->encodings[e].name) && s->kind == VCIX_STAT_COUNT;
   }
-  check(ok, "11 ports, one primary per unit (sfu.entry, systolic/xlu/msa.input), then one commit count per encoding");
+  check(ok, "12 ports, one primary per unit (sfu.entry, misc.issue, systolic/xlu/msa.input), then one commit count per encoding");
 }
 
 // One row through a 7-slot array: it enters in the tick after its push and is held 7 cycles.
@@ -209,6 +211,31 @@ void sfu_and_xlu() {
         "msa: a weight push counts 1 at weight_push and enters nothing; an input push of 3 enters 3 rows; its pop takes 3");
 }
 
+// Ten independent misc instructions, offered until refused each cycle: two a cycle for five cycles.
+void misc() {
+  Run run;
+  int issued = 0, cycles = 0;
+  bool two_a_cycle = true;
+  while (issued < 10) {
+    run.next();
+    cycles++;
+    int now = 0;
+    while (issued < 10 && run.issue(issued % 2 ? MVIN : VLANE_IDX, 4)) {
+      issued++;
+      now++;
+    }
+    two_a_cycle = two_a_cycle && now == 2;
+  }
+  for (int c = 0; c < 5; c++) run.next();
+  const uint64_t admitted = run.stat("misc", "issue", VCIX_STAT_ADMITTED);
+  const uint64_t capacity = run.stat("misc", "issue", VCIX_STAT_CAPACITY);
+  const uint64_t committed = run.stat("committed", "mvin", VCIX_STAT_COUNT) + run.stat("committed", "vlane_idx", VCIX_STAT_COUNT);
+  check(two_a_cycle && cycles == 5 && admitted == 10 && capacity == 2 && committed == 10,
+        "10 independent misc instructions: 2 a cycle for " + n(cycles) + " cycles, misc.issue admitted " + n(admitted) +
+            " of capacity " + n(capacity) + " (utilized cycles " + n(admitted / capacity) + "), committed " +
+            n(committed) + "; expected 5, 10, 2 (5), 10");
+}
+
 // A push squashed behind a vexp still in flight leaves every count as a run that never issued it.
 void squashed() {
   Run with, without;
@@ -249,6 +276,7 @@ int main(int argc, char **argv) {
   one_row();
   continuous();
   sfu_and_xlu();
+  misc();
   squashed();
   return failed;
 }
