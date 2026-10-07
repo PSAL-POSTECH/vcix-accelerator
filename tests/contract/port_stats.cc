@@ -55,6 +55,11 @@ class Toy : public Model {
     return 1;
   }
   void tick(Cycle now) override { array_.tick(now); }
+  void reset() override {
+    issue_.reset();
+    lanes_.reset();
+    array_.reset();
+  }
   std::vector<const Port *> ports() const override { return {&issue_, &lanes_, &array_.entry()}; }
 
  private:
@@ -224,6 +229,34 @@ void within_capacity() {
   expect(ok && moved, "admitted <= capacity * cycles at every cycle, and cycles is the ticks so far");
 }
 
+// A reset gives the ports their room again within the cycle; each room used again counts, so utilization stays <= 1.
+void reset_reopens_a_room() {
+  const vcix_model *m = export_model<Toy<GOOD>>();
+  char error[128] = "";
+  void *self = m->create(&NO_CONFIG, error, sizeof error);
+  const Insn op = {bits_of(OP), 4, 32, 0};
+  int accepted = 0;
+  m->tick(self, 1);
+  for (int round = 0; round < 5; round++) {
+    for (int k = 0; k < 3; k++)
+      if (m->can_accept(self, &op, 1)) {
+        m->issue(self, &op, ++accepted, 1);
+      }
+    m->reset(self);
+  }
+  m->reset(self);
+  m->tick(self, 2);
+  m->reset(self);
+  if (m->can_accept(self, &op, 2)) m->issue(self, &op, ++accepted, 2);
+  const std::vector<uint64_t> v = read(m, self);
+  m->destroy(self);
+  expect(accepted == 11 && v[0] == 11 && v[1] == 2 && v[2] == 6 && v[4] == 44 && v[5] == 8 && v[6] == 6 && v[10] == 2,
+         "issue, reset and issue again in one cycle: 10 admitted at 2 a cycle reads 5 cycles there, a reset with "
+         "nothing admitted adds none, and admitted <= capacity * cycles");
+  if (!(v[0] == 11 && v[2] == 6)) printf("accepted %d admitted %llu cycles %llu\n", accepted, (unsigned long long)v[0],
+                                         (unsigned long long)v[2]);
+}
+
 void squash_restores() {
   bool same = true;
   for (unsigned seed = 1; seed <= 40; seed++) {
@@ -323,6 +356,7 @@ int main() {
   aborts_beyond_room();
   the_list();
   within_capacity();
+  reset_reopens_a_room();
   squash_restores();
   registration_follows_copies();
   reads_change_nothing();

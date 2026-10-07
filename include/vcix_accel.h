@@ -57,7 +57,7 @@ typedef struct vcix_host {
 /* What a statistic's value is. CAPACITY is a constant; every other kind only grows from create on, reset or not. */
 #define VCIX_STAT_ADMITTED 0u  /* what a port let in */
 #define VCIX_STAT_CAPACITY 1u  /* what the port can let in per cycle */
-#define VCIX_STAT_CYCLES 2u    /* cycles the instance was ticked, replays after a squash included */
+#define VCIX_STAT_CYCLES 2u    /* cycles ticked, replays included, plus each room a reset reopened in a cycle */
 #define VCIX_STAT_OCCUPANCY 3u /* what was held behind the port, summed over the cycles */
 #define VCIX_STAT_COUNT 4u     /* a plain count: unit "committed", name an encoding's, counts its commits */
 
