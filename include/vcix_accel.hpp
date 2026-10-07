@@ -126,6 +126,10 @@ class Port {
                    unit_, name_, amount, unit_of_work_, now, left);
       std::abort();
     }
+    if (amount) {
+      reopened_ += now == reset_in_;
+      reset_in_ = Unknown;
+    }
     if (now != cycle_) used_ = 0;
     cycle_ = now;
     used_ += amount;
@@ -133,8 +137,10 @@ class Port {
   }
   // Called once a cycle with what waits behind the entry; summed into occupancy.
   void hold(uint64_t amount) { occupancy_ += amount; }
-  // Forgets what this cycle admitted, as a model's reset must; the counts stay.
+  // Forgets what this cycle admitted, as a model's reset must; the counts stay. A room it used is opened again,
+  // and the next admission in that same cycle counts in reopened(), so admitted <= capacity * (cycles + reopened).
   void reset() {
+    if (used_) reset_in_ = cycle_;
     cycle_ = Unknown;
     used_ = 0;
   }
@@ -146,6 +152,8 @@ class Port {
   bool primary() const { return role_ == PRIMARY; }
   uint64_t admitted() const { return admitted_; }
   uint64_t occupancy() const { return occupancy_; }
+  // Rooms a reset opened a second time within one cycle and that were then used.
+  uint64_t reopened() const { return reopened_; }
 
  private:
   const char *unit_, *name_, *unit_of_work_;
@@ -155,6 +163,8 @@ class Port {
   uint64_t used_ = 0;
   uint64_t admitted_ = 0;
   uint64_t occupancy_ = 0;
+  Cycle reset_in_ = Unknown;
+  uint64_t reopened_ = 0;
 };
 
 // An input queue, a delay line of `slots` that one element a cycle enters, and an output queue; the entry is a Port.
@@ -320,6 +330,7 @@ class Instance {
 
   const std::vector<vcix_stat> &stats() const { return stats_; }
   // Each port's ADMITTED, CAPACITY, CYCLES and OCCUPANCY in the order of ports(), then each encoding's commits.
+  // A port's CYCLES is the ticks plus its reopened() rooms, so its utilization cannot exceed 1.
   void read_stats(uint64_t *values) const {
     const std::vector<const Port *> ports = model.ports();
     if (ports.size() != num_ports_) broken("ports() changed its length since create");
@@ -329,7 +340,7 @@ class Instance {
         broken("ports() changed its order since create");
       values[PER_PORT * p] = ports[p]->admitted();
       values[PER_PORT * p + 1] = ports[p]->capacity();
-      values[PER_PORT * p + 2] = model.cycles();
+      values[PER_PORT * p + 2] = model.cycles() + ports[p]->reopened();
       values[PER_PORT * p + 3] = ports[p]->occupancy();
     }
     for (size_t i = 0; i < committed_.size(); i++) values[PER_PORT * num_ports_ + i] = committed_[i];
