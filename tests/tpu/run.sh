@@ -34,6 +34,12 @@ done
 printf 'tpu_trace: 1\ntpu_sfu_latency_cycles: 4\n' > "$BUILD/tpu-latency-4.yml"
 printf 'tpu_sfu_latency_cycles: 0\n' > "$BUILD/tpu-latency-0.yml"
 
+echo "-- the units' ports, with no simulator"
+"$BUILD/tpu_ports" "$BUILD/libtpu.so" > "$BUILD/tpu-ports.log" 2>&1
+rc[ports]=$?
+report "exit ${rc[ports]}, $(grep -c '^PASS' "$BUILD/tpu-ports.log") passed" "exit 0, 8 passed" \
+  "tpu_ports: each unit's ports count what the cases worked out by hand say (tpu-ports.log)"
+
 echo "-- special-function unit"
 on_gem5 sfu sfu "$HERE/trace.yml"
 on_gem5 latency-4 sfu "$BUILD/tpu-latency-4.yml"
