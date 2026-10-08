@@ -1,6 +1,6 @@
 // The systolic array: weights of fewer columns than lanes, a full matrix, a matrix that slides, pops in
 // pieces, every element width, the two floats of 8 bits, and every rounding mode frm can hold.
-// Output: what each pop left in every lane.
+// Output: what each pop left in every lane. With the argument bf16: bfloat16 pushes, checked against a formula.
 #include "common.h"
 
 kernel_with k_input_8, k_input_16, k_input_32, k_input_64, k_weight_8, k_weight_16, k_weight_32, k_weight_64;
@@ -29,8 +29,8 @@ static void fill(unsigned bytes, unsigned long count, int scale) {
       if (bytes == 8) *(double *)spad(lane, IN + 8 * i) = sixteenths / 16.0;
     }
 }
-// What an element of 8 bits is, as the push or the pop carries it; 0 and 3 are integers.
-enum { INTEGER = 0, E4M3 = 1, E5M2 = 2, UNKNOWN = 3 };
+// What an element is, as the push or the pop carries it; 0 is the width's own, an integer of 8 bits.
+enum { INTEGER = 0, E4M3 = 1, E5M2 = 2, BF16 = 3 };
 static void push_as(kernel_with *function, unsigned long count, unsigned format) {
   if (function(spad(0, IN), 0, count, format, 0) != count) puts("a push did not take every element");
 }
@@ -55,7 +55,40 @@ static void fill_bytes(unsigned long count, int finite) {
 }
 static void set_frm(unsigned long mode) { __asm__ volatile("csrw frm, %0" : : "r"(mode)); }
 
-int main(void) {
+// bfloat16 weights and inputs of exponents 2^-30 to 2^30, past what a half holds, popped as singles. Every
+// product is exact, so lane j's element i must be the float sum over k of input k's element i times weight k of j.
+static int bf16_case(void) {
+  enum { COUNT = 16 };
+  float weight[LANES][LANES], input[LANES][COUNT];
+  for (unsigned lane = 0; lane < LANES; lane++)
+    for (unsigned i = 0; i < COUNT; i++) {
+      const uint32_t bits = (random32() & 0x8000u) << 16 | (97 + random_below(61)) << 23 | (random32() & 0x7fu) << 16;
+      float value;
+      memcpy(&value, &bits, sizeof value);
+      if (i < LANES) weight[lane][i] = value;
+      input[lane][i] = value;
+      *(uint16_t *)spad(lane, IN + 2 * i) = (uint16_t)(bits >> 16);
+    }
+  push_as(k_weight_16, LANES, BF16);
+  push_as(k_input_16, COUNT, BF16);
+  if (k_pop_32(0, spad(0, OUT), COUNT, INTEGER, 0) != COUNT) puts("a pop did not take every element");
+  unsigned wrong = 0;
+  for (unsigned lane = 0; lane < LANES; lane++)
+    for (unsigned i = 0; i < COUNT; i++) {
+      float want = 0;
+      for (unsigned k = 0; k < LANES; k++) want += input[k][i] * weight[lane][k];
+      const float got = *(float *)spad(lane, OUT + 4 * i);
+      if (memcmp(&got, &want, sizeof got)) {
+        if (!wrong) printf("lane %u element %u: got %g, want %g\n", lane, i, (double)got, (double)want);
+        wrong++;
+      }
+    }
+  printf("bf16: %u of %u elements as the formula says\n", LANES * COUNT - wrong, LANES * COUNT);
+  return wrong != 0;
+}
+
+int main(int argc, char **argv) {
+  if (argc == 2 && !strcmp(argv[1], "bf16")) return bf16_case();
   // Two columns of weights: a lane's output is two products.
   push(k_weight_32, 4, 2, 64);
   push(k_input_32, 4, 3, 64);
@@ -110,12 +143,12 @@ int main(void) {
     push_as(k_input_8, 8, format);
     pop_as(k_pop_8, 8, format);
   }
-  // A number that names no kind is an integer, in and out.
+  // Bytes under 0 are integers, in and out.
   fill(1, 4, 48);
-  push_as(k_weight_8, 4, UNKNOWN);
+  push_as(k_weight_8, 4, INTEGER);
   fill(1, 4, 48);
-  push_as(k_input_8, 4, UNKNOWN);
-  pop_as(k_pop_8, 4, UNKNOWN);
+  push_as(k_input_8, 4, INTEGER);
+  pop_as(k_pop_8, 4, INTEGER);
 
   // A pop to fewer bits rounds by frm: every value frm can hold, small sums and sums past the largest of each kind.
   for (unsigned long mode = 0; mode < 8; mode++)

@@ -31,7 +31,7 @@
 .endr
 
 # The systolic array: a push of the source, and a pop into the destination, which keeps what the pop leaves.
-# a3 = what an element of 8 bits is, the number that rides the instruction in its rs1 field: 0 to 3.
+# a3 = what an element is, the number that rides the instruction in its rs1 field: 0 to 3.
 .macro systolic_push name, sew, p
     .globl \name
 \name:

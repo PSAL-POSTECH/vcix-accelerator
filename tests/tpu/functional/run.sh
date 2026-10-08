@@ -116,6 +116,11 @@ EOF
 }
 keyed
 
+echo "-- checked against a formula, which the old Spike has no answer for"
+on_model systolic-bf16 -- systolic bf16; rc=$?
+if [ "$rc" = 0 ]; then printf 'PASS'; else printf 'FAIL'; failed=1; fi
+echo "  bfloat16 weights and inputs (rs1 3) popped as singles: $(tail -n1 "$OUT/systolic-bf16.out") (exit $rc)"
+
 # refused <which> <exit> <text>: the run ends there, with this on standard error.
 refused() {
   local rc
@@ -127,6 +132,8 @@ echo "-- what the model does not carry out"
 refused doubles 1 "tpu: vexp: an element of 64 bits is not supported"
 refused pop 1 "tpu: systolic pop: 1 elements asked, 0 computed"
 refused input 1 "tpu: systolic input push: no weight was pushed before it"
+refused format 1 "tpu: systolic: format 3 names no element of 8 bits"
+refused bf16-pop 1 "tpu: systolic pop: a pop to bfloat16 is not modeled"
 refused pattern 201 "XLU ERROR: the pre stage walks 1 columns but lane 0 carries 0 pattern entries (SIMM5 16)"
 refused words 1 "tpu: msa push: its elements are words of 32 bits, not of 16"
 refused overflow 200 "MVIN ERROR: Scratchpad address overflow: 0xd0080000"
