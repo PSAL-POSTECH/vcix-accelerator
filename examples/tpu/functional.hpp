@@ -78,7 +78,14 @@ struct Narrow {
   int fraction_bits, exponent_bits;
   bool infinity;
 };
-constexpr Narrow HALF{10, 5, true}, E4M3{3, 4, false}, E5M2{2, 5, true};
+constexpr Narrow HALF{10, 5, true}, E4M3{3, 4, false}, E5M2{2, 5, true}, BF16{7, 8, true};
+// A bfloat16 as a single: its bits are the single's upper half. Every NaN is the default NaN.
+inline float bf16_to_float(uint16_t bits) {
+  const uint32_t wide = (bits & 0x7f80) == 0x7f80 && (bits & 0x7f) ? 0x7fc00000u : static_cast<uint32_t>(bits) << 16;
+  float value;
+  std::memcpy(&value, &wide, sizeof value);
+  return value;
+}
 
 // `value` as `to`, rounded as SoftFloat for RISC-V rounds under the mode `frm` holds: 0 to nearest even,
 // 1 toward zero, 2 down, 3 up, 4 to nearest away, 5 to odd (toward zero, the last bit set when anything was
@@ -299,19 +306,28 @@ class Functional {
 
   // ---- The systolic array: a matrix of weights times each pushed input vector, a float per lane.
   using Queues = std::vector<std::deque<float>>;
-  // What an element of 8 bits is rides the push or the pop, in its rs1 field: 1 an E4M3, 2 an E5M2, anything else an integer.
-  static const Narrow *systolic_fp8(const Insn &insn) {
-    return vcix_accel::rs1(insn) == 1 ? &E4M3 : vcix_accel::rs1(insn) == 2 ? &E5M2 : nullptr;
+  // What an element is rides the push or the pop in its rs1 field, one table at every width: 0 the width's own
+  // (an integer of 8 bits, a half, a single; 64 bits are zeros), 1 an E4M3, 2 an E5M2, 3 a bfloat16.
+  // A code its width cannot hold ends the run.
+  enum class Element { INTEGER, E4M3, E5M2, HALF, BF16, SINGLE, ZERO };
+  static Element systolic_format(const Insn &insn, uint32_t sew) {
+    const uint32_t code = vcix_accel::rs1(insn);
+    if (code == 0) return sew == 8 ? Element::INTEGER : sew == 16 ? Element::HALF : sew == 32 ? Element::SINGLE : Element::ZERO;
+    if (sew == 8 && (code == 1 || code == 2)) return code == 1 ? Element::E4M3 : Element::E5M2;
+    if (sew == 16 && code == 3) return Element::BF16;
+    fail("systolic: format %u names no element of %u bits", code, sew);
   }
   static float systolic_element(const Host &host, const Insn &insn, uint32_t lane, uint32_t reg, uint32_t i) {
-    switch (insn.sew_bits) {
-      case 8:
-        if (const Narrow *format = systolic_fp8(insn)) return fp8_to_float(get<uint8_t>(host, lane, reg, i), *format);
-        return static_cast<float>(get<int8_t>(host, lane, reg, i));
-      case 16: return half_to_float(get<uint16_t>(host, lane, reg, i));
-      case 32: return get<float>(host, lane, reg, i);
-      default: return 0.0f;
+    switch (systolic_format(insn, insn.sew_bits)) {
+      case Element::INTEGER: return static_cast<float>(get<int8_t>(host, lane, reg, i));
+      case Element::E4M3: return fp8_to_float(get<uint8_t>(host, lane, reg, i), E4M3);
+      case Element::E5M2: return fp8_to_float(get<uint8_t>(host, lane, reg, i), E5M2);
+      case Element::HALF: return half_to_float(get<uint16_t>(host, lane, reg, i));
+      case Element::BF16: return bf16_to_float(get<uint16_t>(host, lane, reg, i));
+      case Element::SINGLE: return get<float>(host, lane, reg, i);
+      case Element::ZERO: return 0.0f;
     }
+    return 0.0f;
   }
   void systolic_size(const Host &host) {
     if (sa_input_.size() == host.lanes()) return;
@@ -357,10 +373,13 @@ class Functional {
     }
     sa_ready_ += insn.vl;
   }
-  // A pop to fewer bits rounds by frm.
+  // A pop reads rs1 as a push does, and a code its width cannot hold ends the run. A pop to fewer bits rounds
+  // by frm; a pop of 64 bits writes singles; a bfloat16 result is not modeled.
   void systolic_pop(const Host &host, const Insn &insn) {
     systolic_size(host);
     const uint64_t mode = host.csr(CSR_FRM);
+    const Element format = systolic_format(insn, insn.sew_bits);
+    if (format == Element::BF16) fail("systolic pop: a pop to bfloat16 is not modeled");
     if (sa_ready_ < insn.vl)
       fail("systolic pop: %u elements asked, %llu computed", insn.vl, static_cast<unsigned long long>(sa_ready_));
     const uint32_t vd = vcix_accel::rd(insn);
@@ -369,14 +388,11 @@ class Functional {
         if (sa_output_[lane].empty()) break;
         const float value = sa_output_[lane].front();
         sa_output_[lane].pop_front();
-        switch (insn.sew_bits) {
-          case 8:
-            if (const Narrow *format = systolic_fp8(insn))
-              put<uint8_t>(host, lane, vd, i, static_cast<uint8_t>(narrow(value, *format, mode)));
-            else
-              put<int8_t>(host, lane, vd, i, static_cast<int8_t>(value));
-            break;
-          case 16: put<uint16_t>(host, lane, vd, i, static_cast<uint16_t>(narrow(value, HALF, mode))); break;
+        switch (format) {
+          case Element::INTEGER: put<int8_t>(host, lane, vd, i, static_cast<int8_t>(value)); break;
+          case Element::E4M3: put<uint8_t>(host, lane, vd, i, static_cast<uint8_t>(narrow(value, E4M3, mode))); break;
+          case Element::E5M2: put<uint8_t>(host, lane, vd, i, static_cast<uint8_t>(narrow(value, E5M2, mode))); break;
+          case Element::HALF: put<uint16_t>(host, lane, vd, i, static_cast<uint16_t>(narrow(value, HALF, mode))); break;
           default: put<float>(host, lane, vd, i, value); break;
         }
       }
