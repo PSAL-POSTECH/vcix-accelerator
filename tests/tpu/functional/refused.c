@@ -2,7 +2,7 @@
 #include "common.h"
 
 kernel k_vexp_64, k_cross_pop_32;
-kernel_with k_pop_16, k_pop_32, k_input_16, k_input_32, k_weight_8, k_weight_16, k_cross_push_32, k_msa_push_16;
+kernel_with k_pop_16, k_pop_32, k_input_16, k_input_32, k_weight_8, k_weight_16, k_weight_32, k_cross_push_32, k_msa_push_16;
 
 // One row of four words along the split axis, a word per lane.
 static struct {
@@ -36,6 +36,10 @@ int main(int argc, char **argv) {
     k_weight_16(spad(0, 0), 0, 1, 0, 0);
     k_input_16(spad(0, 0), 0, 1, 0, 0);
     k_pop_16(0, spad(0, 0), 1, 3, 0);
+  } else if (!strcmp(which, "pop-format")) {  // a pop of singles under rs1 1, which names an E4M3
+    k_weight_32(spad(0, 0), 0, 1, 0, 0);
+    k_input_32(spad(0, 0), 0, 1, 0, 0);
+    k_pop_32(0, spad(0, 0), 1, 1, 0);
   } else if (!strcmp(which, "pattern")) {     // a shuffle by a pattern that was never given
     k_cross_push_32(spad(0, 0), 0, 1, 16, 0);
     k_cross_pop_32(0, spad(0, 0), 1);
@@ -52,7 +56,7 @@ int main(int argc, char **argv) {
     DMA(7, &row, &row);
     DMA(2, memory, spad(0, 0));
   } else {
-    puts("usage: refused doubles | pop | input | format | bf16-pop | pattern | words | overflow | indices");
+    puts("usage: refused doubles | pop | input | format | bf16-pop | pop-format | pattern | words | overflow | indices");
     return 2;
   }
   puts("it ran");

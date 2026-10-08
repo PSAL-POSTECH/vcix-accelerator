@@ -373,11 +373,13 @@ class Functional {
     }
     sa_ready_ += insn.vl;
   }
-  // A pop to fewer bits rounds by frm. A pop of 16 bits writes halves, as the old Spike did whatever rs1 said,
-  // except under 3: a bfloat16 result is not modeled.
+  // A pop reads rs1 as a push does, and a code its width cannot hold ends the run. A pop to fewer bits rounds
+  // by frm; a pop of 64 bits writes singles; a bfloat16 result is not modeled.
   void systolic_pop(const Host &host, const Insn &insn) {
     systolic_size(host);
     const uint64_t mode = host.csr(CSR_FRM);
+    const Element format = systolic_format(insn, insn.sew_bits);
+    if (format == Element::BF16) fail("systolic pop: a pop to bfloat16 is not modeled");
     if (sa_ready_ < insn.vl)
       fail("systolic pop: %u elements asked, %llu computed", insn.vl, static_cast<unsigned long long>(sa_ready_));
     const uint32_t vd = vcix_accel::rd(insn);
@@ -386,17 +388,11 @@ class Functional {
         if (sa_output_[lane].empty()) break;
         const float value = sa_output_[lane].front();
         sa_output_[lane].pop_front();
-        switch (insn.sew_bits) {
-          case 8:
-            if (const Element format = systolic_format(insn, 8); format != Element::INTEGER)
-              put<uint8_t>(host, lane, vd, i, static_cast<uint8_t>(narrow(value, format == Element::E4M3 ? E4M3 : E5M2, mode)));
-            else
-              put<int8_t>(host, lane, vd, i, static_cast<int8_t>(value));
-            break;
-          case 16:
-            if (vcix_accel::rs1(insn) == 3) fail("systolic pop: a pop to bfloat16 is not modeled");
-            put<uint16_t>(host, lane, vd, i, static_cast<uint16_t>(narrow(value, HALF, mode)));
-            break;
+        switch (format) {
+          case Element::INTEGER: put<int8_t>(host, lane, vd, i, static_cast<int8_t>(value)); break;
+          case Element::E4M3: put<uint8_t>(host, lane, vd, i, static_cast<uint8_t>(narrow(value, E4M3, mode))); break;
+          case Element::E5M2: put<uint8_t>(host, lane, vd, i, static_cast<uint8_t>(narrow(value, E5M2, mode))); break;
+          case Element::HALF: put<uint16_t>(host, lane, vd, i, static_cast<uint16_t>(narrow(value, HALF, mode))); break;
           default: put<float>(host, lane, vd, i, value); break;
         }
       }

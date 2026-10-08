@@ -136,8 +136,8 @@ int main(int argc, char **argv) {
     push_as(k_input_8, 16, format);
     pop_as(k_pop_8, 4, format);
     pop_as(k_pop_8, 4, format == E4M3 ? E5M2 : E4M3);
-    pop_as(k_pop_16, 4, format);
-    pop_as(k_pop_32, 4, format);
+    pop_as(k_pop_16, 4, INTEGER);
+    pop_as(k_pop_32, 4, INTEGER);
     // Any bytes: infinities and NaNs go in too.
     fill_bytes(8, 0);
     push_as(k_input_8, 8, format);
