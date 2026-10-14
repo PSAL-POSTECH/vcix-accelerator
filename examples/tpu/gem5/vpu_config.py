@@ -17,7 +17,10 @@ class MinorFPUnit(MinorFU):
         ]
     )
 
-class MinorVecAdder(MinorFU):
+# The v6e's VALU: 4 slots a bundle (XLA's static per-bundle utilization, examples/tpu/README.md: MXU 2, XLU 2,
+# VALU 4, ...), so 4 units take every vector ALU op class, the adder's, multiplier's, divider's and misc's (vmv,
+# vslide, vrgather, cvt, merge, sgnj) together: a mixed stream issues 4 a cycle, not 4 of each kind. Each kept opLat 1.
+class MinorVALU(MinorFU):
     opClasses = minorMakeOpClassSet(
         [
             "SimdAdd",
@@ -31,14 +34,6 @@ class MinorVecAdder(MinorFU):
             "SimdCmp",
             "SimdBf16Add",
             "SimdBf16Cmp",
-        ]
-    )
-    opLat = 1
-    unit = "Vpu"
-
-class MinorVecMultiplier(MinorFU):
-    opClasses = minorMakeOpClassSet(
-        [
             "SimdMult",
             "SimdFloatMult",
             "SimdMultAcc",
@@ -52,16 +47,16 @@ class MinorVecMultiplier(MinorFU):
             "SimdBf16MultAcc",
             "SimdBf16MatMultAcc",
             "SimdBf16DotProd",
-        ]
-    )
-    opLat = 1
-    unit = "Vpu"
-
-class MinorVecDivider(MinorFU):
-    opClasses = minorMakeOpClassSet(
-        [
             "SimdDiv",
             "SimdFloatDiv",
+            "SimdCvt",
+            "SimdFloatCvt",
+            "SimdFloatMisc",
+            "SimdPredAlu",
+            "SimdMisc",
+            "SimdExt",
+            "SimdFloatExt",
+            "SimdBf16Cvt",
         ]
     )
     opLat = 1
@@ -99,21 +94,6 @@ class MinorVecLdStore(MinorFU):
             "SimdUnitStrideSegmentedFaultOnlyFirstLoad",
             "SimdStrideSegmentedLoad",
             "SimdStrideSegmentedStore",
-        ]
-    )
-    opLat = 1
-
-class MinorVecMisc(MinorFU):
-    opClasses = minorMakeOpClassSet(
-        [
-            "SimdCvt",
-            "SimdFloatCvt",
-            "SimdFloatMisc",
-            "SimdPredAlu",
-            "SimdMisc",
-            "SimdExt",
-            "SimdFloatExt",
-            "SimdBf16Cvt",
         ]
     )
     opLat = 1
@@ -172,41 +152,29 @@ class MinorCustomFUPool(MinorFUPool):
         # Vector
         MinorVecConfig(),
         MinorVecConfig(),
-        MinorVecMisc(),
-        MinorVecMisc(),
         MinorVecLdStore(),
         MinorVecLdStore(),
 
         # Vector ALU0
-        MinorVecAdder(),
-        MinorVecMultiplier(),
-        MinorVecDivider(),
+        MinorVALU(),
         MinorVecReduce(),
 
         # Vector ALU1
-        MinorVecAdder(),
-        MinorVecMultiplier(),
-        MinorVecDivider(),
+        MinorVALU(),
         MinorVecReduce(),
 
         # Vector
         MinorVecConfig(),
         MinorVecConfig(),
-        MinorVecMisc(),
-        MinorVecMisc(),
         MinorVecLdStore(),
         MinorVecLdStore(),
 
         # Vector ALU0
-        MinorVecAdder(),
-        MinorVecMultiplier(),
-        MinorVecDivider(),
+        MinorVALU(),
         MinorVecReduce(),
 
         # Vector ALU1
-        MinorVecAdder(),
-        MinorVecMultiplier(),
-        MinorVecDivider(),
+        MinorVALU(),
         MinorVecReduce(),
 
         # A fifth and a sixth integer unit, which the original does not have: a compensation for RVV loads having no
