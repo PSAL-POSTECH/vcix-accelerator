@@ -18,8 +18,8 @@ class MinorFPUnit(MinorFU):
     )
 
 # The v6e's VALU: 4 slots a bundle (XLA's static per-bundle utilization, examples/tpu/README.md: MXU 2, XLU 2,
-# VALU 4, ...), so 4 units take every vector ALU op class, the adder's, multiplier's, divider's and misc's (vmv,
-# vslide, vrgather, cvt, merge, sgnj) together: a mixed stream issues 4 a cycle, not 4 of each kind. Each kept opLat 1.
+# VALU 4, ...), so 4 units take every vector ALU op class, the adder's, multiplier's, divider's, reduction's and misc's
+# (vmv, vslide, vrgather, cvt, merge, sgnj) together: a mixed stream issues 4 a cycle, not 4 of each kind. All opLat 1.
 class MinorVALU(MinorFU):
     opClasses = minorMakeOpClassSet(
         [
@@ -57,14 +57,6 @@ class MinorVALU(MinorFU):
             "SimdExt",
             "SimdFloatExt",
             "SimdBf16Cvt",
-        ]
-    )
-    opLat = 1
-    unit = "Vpu"
-
-class MinorVecReduce(MinorFU):
-    opClasses = minorMakeOpClassSet(
-        [
             "SimdReduceAdd",
             "SimdReduceAlu",
             "SimdReduceCmp",
@@ -155,13 +147,9 @@ class MinorCustomFUPool(MinorFUPool):
         MinorVecLdStore(),
         MinorVecLdStore(),
 
-        # Vector ALU0
+        # Vector ALU
         MinorVALU(),
-        MinorVecReduce(),
-
-        # Vector ALU1
         MinorVALU(),
-        MinorVecReduce(),
 
         # Vector
         MinorVecConfig(),
@@ -169,13 +157,9 @@ class MinorCustomFUPool(MinorFUPool):
         MinorVecLdStore(),
         MinorVecLdStore(),
 
-        # Vector ALU0
+        # Vector ALU
         MinorVALU(),
-        MinorVecReduce(),
-
-        # Vector ALU1
         MinorVALU(),
-        MinorVecReduce(),
 
         # A fifth and a sixth integer unit, which the original does not have: a compensation for RVV loads having no
         # immediate offset, not a fact of the v6e (examples/tpu/README.md, "Two more integer units"). Last, so that

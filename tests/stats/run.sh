@@ -115,7 +115,7 @@ on_vpu vpu
 report "exit ${rc[vpu]}, dumps $(dumps vpu)" "exit 0, dumps 4" "three windows and the end of the run"
 report "$(vpu vpu 1)" "8 1 agree" "eight vector adds, each alone: eight busy cycles at capacity 1"
 report "$(vpu vpu 2)" "0 1 agree" "scalar adds only: no busy cycle"
-report "$(vpu vpu 3)" "2 1 agree" "eight independent vector adds on the four MinorVecAdders: two busy cycles"
+report "$(vpu vpu 3)" "2 1 agree" "eight independent vector adds on the four MinorVALUs: two busy cycles"
 report "$(vpu vpu 4)" "2 1 agree" "no reset after dump 3: the end of the run carries its window on"
 report "$(grep -c '\.units\.' "$BUILD/m5out-stats-markers/stats.txt")" "0" \
   "gem5_se.py's pool tags no FU with a unit: no units statistics"
