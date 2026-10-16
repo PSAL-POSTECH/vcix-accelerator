@@ -330,6 +330,9 @@ PyTorchSim measures on, each with the one unit naming its model.
 include/vcix_accel.h      the C ABI: vcix_model, vcix_insn,
                           vcix_config, vcix_host, vcix_encoding
 include/vcix_accel.hpp    C++ wrapper: subclass Model, VCIX_ACCEL_REGISTER
+include/vcix_uarch.hpp    units as hardware blocks (Port, Pipeline, CommandQueue,
+                          Register) and a route per instruction; Machine derives
+                          the Model from them
 adapters/spike/           what the Spike branch does; its code is in the Spike
                           repository
 adapters/gem5/            what the gem5 branch does; its code is in the gem5
@@ -343,6 +346,7 @@ examples/tpu/             a model made of units: the timing of a TPU's special-f
 examples/tpu/gem5/        the machine the tpu example is measured on: PyTorchSim's
                           gem5 CPU and memory configuration, with two load/store
                           ports and two more integer units
+examples/copier/          examples/rtl/copier/copier.sv as a vcix_uarch unit
 examples/tpuv6e/          a TPU v6e: the tpu example's units with a matrix unit
                           as the array, its own model and library
 examples/tpuv6e/gem5/     the machine the tpuv6e example is measured on: the tpu

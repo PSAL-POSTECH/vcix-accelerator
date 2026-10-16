@@ -18,6 +18,8 @@ vcix_accel_add_model(print_args examples/print_args/print_args.cc)
 vcix_accel_add_model(tpu examples/tpu/tpu.cc)
 vcix_accel_add_model(tpuv6e examples/tpuv6e/tpuv6e.cc)
 vcix_accel_add_model(tpuv3 examples/tpuv3/tpuv3.cc)
+# examples/copier: examples/rtl/copier/copier.sv as a vcix_uarch unit, no Verilator needed.
+vcix_accel_add_model(copier examples/copier/copier.cc)
 # examples/tpuv6e and examples/tpuv3 are the tpu example's units, its matrix unit among them, as tpu/<unit>.hpp.
 target_include_directories(tpuv6e PRIVATE examples)
 target_include_directories(tpuv3 PRIVATE examples)
@@ -80,6 +82,8 @@ add_executable(direct tests/contract/direct.cc)
 target_link_libraries(direct PRIVATE vcix_accel ${CMAKE_DL_LIBS})
 add_executable(port_stats tests/contract/port_stats.cc)
 target_link_libraries(port_stats PRIVATE vcix_accel)
+add_executable(route_once tests/contract/route_once.cc)
+target_link_libraries(route_once PRIVATE vcix_accel)
 
 # tests/tpu: the tpu units' ports, read through the table with no simulator.
 add_executable(tpu_ports tests/tpu/ports.cc)
@@ -90,6 +94,9 @@ target_link_libraries(tpuv6e_ports PRIVATE vcix_accel ${CMAKE_DL_LIBS})
 # tests/tpuv3: the same, of the tpuv3 model.
 add_executable(tpuv3_ports tests/tpuv3/ports.cc)
 target_link_libraries(tpuv3_ports PRIVATE vcix_accel ${CMAKE_DL_LIBS})
+# tests/rtl: libtpu.so's RTL keys against librtl_systolic.so where the array's stall mode shows, with no simulator.
+add_executable(rtl_stall tests/rtl/stall.cc)
+target_link_libraries(rtl_stall PRIVATE vcix_accel ${CMAKE_DL_LIBS})
 
 add_executable(timing_probe tools/timing_probe.cc)
 target_link_libraries(timing_probe PRIVATE vcix_accel ${CMAKE_DL_LIBS})
