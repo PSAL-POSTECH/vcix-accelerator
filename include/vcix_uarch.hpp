@@ -834,6 +834,19 @@ class Machine : public vcix_accel::Model {
     std::apply([&](U &...u) { (u.hardware(blocks([&](Port &p) { all.push_back(&p); })), ...); }, self.units_);
     return all;
   }
+  // The timeline's blocks: per unit its ports, its pipelines by their entry port, its queues; then their state.
+  std::string timeline_blocks() const override {
+    std::string out = "\"units\":[";
+    auto &self = const_cast<Machine &>(*this);
+    std::apply([&](U &...u) { (unit_blocks(u, out), ...); }, self.units_);
+    return out + "]";
+  }
+  std::string timeline_state() const override {
+    std::string out = "\"units\":[";
+    auto &self = const_cast<Machine &>(*this);
+    std::apply([&](U &...u) { (unit_state(u, out), ...); }, self.units_);
+    return out + "],\"ready\":" + ids(ready_);
+  }
 
  protected:
   template <class... Name>
@@ -1005,8 +1018,12 @@ class Machine : public vcix_accel::Model {
     if (CommandQueue *q = r.queue()) list_blocks(u, *q);
     const Id id = ++spike_id_;
     const Cycle issued = clock_, latency = r.issue(clock_, id, ready_);
+    if (vcix_accel::Timeline *t = timeline()) {
+      if (!spike_marked_) t->event("spike", issued, ""), spike_marked_ = true;
+      t->issue(issued, id, instruction.name, latency);
+    }
     if (latency != vcix_accel::Unknown)
-      while (clock_ < issued + latency) tick(++clock_);
+      while (clock_ < issued + latency) spike_tick();
     const auto done = [&] {
       return (latency != vcix_accel::Unknown || Machine::ready(id, clock_)) && !queued(u, id);
     };
@@ -1016,13 +1033,22 @@ class Machine : public vcix_accel::Model {
     });
     r.done();
     Machine::commit(insn, id, clock_);
+    if (vcix_accel::Timeline *t = timeline()) {
+      t->event("commit", clock_, "\"id\":" + std::to_string(id));
+      t->state(clock_, timeline_state(), false);
+    }
+  }
+  // Spike's tick: with a timeline, the state at the end of the cycle before is written first.
+  void spike_tick() {
+    if (vcix_accel::Timeline *t = timeline()) t->state(clock_, timeline_state(), false);
+    tick(++clock_);
   }
   // One cycle Spike waits for `until`; a cycle in which nothing moves, no command still on its way and `until` not
   // yet true, is the same every cycle after: the run ends there, with the reason `stuck` gives if it gives one.
   template <class V, class Until, class Stuck>
   void spike_cycle(V &u, const char *name, Until &&until, Stuck &&stuck) {
     motion(u, before_);
-    tick(++clock_);
+    spike_tick();
     if (until()) return;
     motion(u, after_);
     if (after_ != before_ || arriving(u)) return;
@@ -1078,12 +1104,75 @@ class Machine : public vcix_accel::Model {
     return any;
   }
 
+  template <class V>
+  static void unit_blocks(V &u, std::string &out) {
+    using vcix_accel::Timeline;
+    std::string name, ports, pipes, queues;
+    const auto comma = [](const std::string &s) { return std::string(s.empty() ? "" : ","); };
+    u.hardware(blocks(
+        [&](Port &p) {
+          if (name.empty()) name = p.unit();
+          ports += std::string(comma(ports)) + "{\"name\":" + Timeline::quoted(p.name()) + ",\"work\":" +
+                   Timeline::quoted(p.unit_of_work()) + ",\"capacity\":" + Timeline::number(p.capacity()) + "}";
+        },
+        [&](auto &p, Port &entry, auto...) {
+          pipes += std::string(comma(pipes)) + "{\"entry\":" + Timeline::quoted(entry.name()) + ",\"stages\":" +
+                   std::to_string(p.stages_) + ",\"depth\":" + Timeline::number(p.depth_) + ",\"outputs\":" +
+                   std::to_string(p.outputs_) + "}";
+        },
+        [&](CommandQueue &q) { queues += std::string(comma(queues)) + "{\"depth\":" + std::to_string(q.depth()) + "}"; }));
+    out += std::string(out.back() == '[' ? "" : ",") + "{\"name\":" + Timeline::quoted(name.c_str()) + ",\"ports\":[" +
+           ports + "],\"pipelines\":[" + pipes + "],\"queues\":[" + queues + "]}";
+  }
+  // A unit's state: each port's admitted and held so far; each pipeline's input rows, its stages' rows as
+  // [stage, rows] (stage 0 entered this cycle), its output rows and its moves; each queue's commands as
+  // [id, arrives, step, steps, done in step, started] and the ids waiting for it to be idle.
+  template <class V>
+  static void unit_state(V &u, std::string &out) {
+    std::string admitted, held, pipes, queues;
+    const auto comma = [](const std::string &s) { return std::string(s.empty() ? "" : ","); };
+    u.hardware(blocks(
+        [&](Port &p) {
+          admitted += comma(admitted) + std::to_string(p.admitted());
+          held += comma(held) + std::to_string(p.occupancy());
+        },
+        [&](auto &p, Port &, auto...) {
+          std::string line;
+          uint64_t rows = 0;
+          int64_t stage = -1;
+          p.line_.each([&](uint64_t, uint32_t n, uint32_t tag) {
+            const int64_t k = static_cast<uint32_t>(p.moves_ - 1 - tag);
+            if (k != stage && stage >= 0) line += comma(line) + "[" + std::to_string(stage) + "," + std::to_string(rows) + "]", rows = 0;
+            stage = k, rows += n;
+          });
+          if (stage >= 0) line += comma(line) + "[" + std::to_string(stage) + "," + std::to_string(rows) + "]";
+          pipes += comma(pipes) + "{\"in\":" + std::to_string(p.input_.rows()) + ",\"line\":[" + line + "],\"out\":[" +
+                   std::to_string(p.out_[0].rows()) + "," + std::to_string(p.out_[1].rows()) + "],\"moves\":" +
+                   std::to_string(p.moves_) + "}";
+        },
+        [&](CommandQueue &q) {
+          std::string cmds;
+          for (const CommandQueue::Command &c : q.list_)
+            cmds += comma(cmds) + "[" + std::to_string(c.id) + "," + std::to_string(c.arrives) + "," + std::to_string(c.step) + "," +
+                    std::to_string(c.count) + "," + std::to_string(c.done) + "," + (c.started ? "1" : "0") + "]";
+          queues += comma(queues) + "{\"commands\":[" + cmds + "],\"waiting\":" + ids(q.waiters_) + "}";
+        }));
+    out += std::string(out.back() == '[' ? "" : ",") + "{\"admitted\":[" + admitted + "],\"held\":[" + held +
+           "],\"pipelines\":[" + pipes + "],\"queues\":[" + queues + "]}";
+  }
+  static std::string ids(const std::vector<Id> &v) {
+    std::string out = "[";
+    for (Id id : v) out += (out.size() > 1 ? "," : "") + std::to_string(id);
+    return out + "]";
+  }
+
   std::tuple<U...> units_;
   std::vector<Id> ready_;
   std::vector<Beats> beats_;
   std::vector<uint64_t> before_, after_;
   Cycle clock_ = 0;
   Id spike_id_ = 0;
+  bool spike_marked_ = false;
 };
 
 }  // namespace vcix_uarch

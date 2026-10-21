@@ -1,0 +1,891 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>vcix timeline viewer</title>
+<style>
+:root {
+  --bg: #ffffff; --fg: #1d2330; --muted: #6a7282; --line: #dde1e8; --panel: #f6f7f9; --axis: #eef0f4;
+  --accent: #2563eb; --cursor: rgba(37, 99, 235, 0.16); --cursor-edge: #2563eb; --idle: #c9ced8;
+  --port: 59, 130, 246; --in: 14, 165, 233; --stage: 20, 184, 166; --out: 139, 92, 246;
+  --moved: 34, 197, 94; --stall: 239, 68, 68; --queue: 245, 158, 11; --step: 202, 138, 4;
+  --issue: 37, 99, 235; --commit: 22, 163, 74; --squash: 220, 38, 38; --replay: 245, 158, 11;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #14171d; --fg: #e3e6ec; --muted: #8f97a6; --line: #2c313b; --panel: #1b1f27; --axis: #1f242d;
+    --accent: #6ea0ff; --cursor: rgba(110, 160, 255, 0.18); --cursor-edge: #6ea0ff; --idle: #3a404c;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg);
+  font: 13px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; }
+body { display: flex; flex-direction: column; }
+header { border-bottom: 1px solid var(--line); padding: 8px 12px; }
+.bar { display: flex; flex-wrap: wrap; gap: 6px 14px; align-items: center; }
+.bar label, .bar .grp { display: inline-flex; gap: 4px; align-items: center; color: var(--muted); }
+.bar input[type=number] { width: 7em; }
+button, select, input { font: inherit; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 4px; padding: 2px 6px; }
+button:hover { border-color: var(--accent); }
+.file { font-weight: 600; color: var(--fg) !important; }
+#summary { margin-top: 6px; }
+#summary .title { font-size: 15px; font-weight: 600; }
+#summary .sim { margin-top: 2px; }
+#summary .sim.spike { color: rgb(var(--squash)); }
+#summary .counts { color: var(--muted); }
+#summary .err { color: rgb(var(--squash)); font-weight: 600; }
+main { flex: 1; display: flex; min-height: 0; }
+#view { position: relative; flex: 1; min-width: 0; }
+#cv { position: absolute; left: 0; top: 0; pointer-events: none; }
+#scroller { position: absolute; inset: 0; overflow: auto; }
+#spacer { width: 1px; height: 1px; }
+#drop { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  color: var(--muted); font-size: 16px; border: 2px dashed var(--line); margin: 16px; border-radius: 8px; pointer-events: none; }
+#drop.over { border-color: var(--accent); color: var(--accent); }
+#drop.hidden { display: none; }
+#drop.overlay { display: flex; background: color-mix(in srgb, var(--bg) 85%, transparent); }
+aside { width: 380px; flex: none; border-left: 1px solid var(--line); background: var(--panel); overflow: auto; padding: 8px 10px; }
+aside h3 { margin: 0 0 4px; font-size: 15px; }
+aside h4 { margin: 10px 0 3px; font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+aside .meta { color: var(--muted); }
+aside table { border-collapse: collapse; width: 100%; font-variant-numeric: tabular-nums; }
+aside td, aside th { padding: 1px 4px; border-bottom: 1px solid var(--line); text-align: right; white-space: nowrap; }
+aside td:first-child, aside th:first-child { text-align: left; }
+aside th { color: var(--muted); font-weight: 500; }
+aside details { margin-top: 6px; }
+aside summary { font-weight: 600; cursor: pointer; }
+aside .sub { margin: 4px 0 0 0; }
+aside ul { margin: 2px 0; padding-left: 18px; }
+aside .none { color: var(--muted); }
+.hl { font-weight: 700; }
+#tip { position: fixed; z-index: 10; pointer-events: none; background: var(--fg); color: var(--bg); padding: 4px 7px;
+  border-radius: 4px; white-space: pre; font-size: 12px; display: none; max-width: 60vw; }
+.keys { color: var(--muted); font-size: 12px; }
+@media (max-width: 800px) { aside { width: 46vw; } }
+</style>
+</head>
+<body>
+<header>
+  <div class="bar">
+    <label class="file">Open timeline <input type="file" id="file"></label>
+    <span class="grp">cycles/column <select id="cpc"></select></span>
+    <span class="grp">column px <input type="range" id="colw" min="3" max="64" value="16"></span>
+    <button id="fit" title="Choose cycles/column so the whole run fits">fit</button>
+    <span class="grp">jump to cycle <input type="number" id="jump"><button id="go">go</button></span>
+    <button id="prev" title="Previous cycle with an event or state change (p)">◀ change</button>
+    <button id="next" title="Next cycle with an event or state change (n)">change ▶</button>
+    <button id="play" title="Play / pause (space)">▶ play</button>
+    <span class="grp">speed <select id="speed"><option>2</option><option selected>10</option><option>30</option><option>100</option></select> cycles/s</span>
+    <label title="Collapse runs of cycles with no event and no state change into one marked column"><input type="checkbox" id="collapse"> collapse idle runs of ≥ <input type="number" id="minrun" value="8" min="2"> cycles</label>
+    <span class="keys">←/→ cycle · shift ±column · n/p change · space play</span>
+  </div>
+  <div id="summary"><span class="counts">Load a timeline file (vcix_timeline JSON Lines): use the button or drop the file here.</span></div>
+</header>
+<main>
+  <div id="view">
+    <canvas id="cv"></canvas>
+    <div id="scroller" tabindex="0"><div id="spacer"></div></div>
+    <div id="drop">Drop a timeline file here</div>
+  </div>
+  <aside id="panel"><div class="none">No cycle selected.</div></aside>
+</main>
+<div id="tip"></div>
+<script>
+// Loads a vcix_timeline JSON Lines file and draws, from its header alone, a lane per in-flight instruction and a
+// row per block (port, pipeline, queue) over cycles; only the visible columns are drawn, on one canvas.
+'use strict';
+const $ = id => document.getElementById(id);
+const LABEL_W = 250, AXIS_H = 46, LANE_H = 18, ROW_H = 18, GROUP_H = 20, SECTION_H = 20, MAXW = 3e7;
+const CPC = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000, 50000, 100000];
+const scroller = $('scroller'), cv = $('cv'), tip = $('tip');
+let T = null, cols = null, layout = null, C = null, raf = 0, panelRaf = 0, playTimer = 0;
+const V = { cpc: 1, colW: 16, collapse: false, minRun: 8, cursor: null, expanded: new Set() };
+
+function esc(s) { return String(s).replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[ch]); }
+function lowerBound(a, x) { let lo = 0, hi = a.length; while (lo < hi) { const m = (lo + hi) >> 1; if (a[m] < x) lo = m + 1; else hi = m; } return lo; }
+function lineAt(c) { return lowerBound(T.LC, c + 1) - 1; }
+
+// Calls fn(i, from, to, atLine) for each stretch [from, to) of [a, b) governed by state line i (-1: before the first),
+// atLine telling whether `from` is the cycle line i was written for.
+function forSeg(a, b, fn) {
+  const LC = T.LC, N = LC.length;
+  let i = lineAt(a), from = a;
+  while (from < b) {
+    const to = i + 1 < N ? Math.min(b, LC[i + 1]) : b;
+    fn(i, from, to, i >= 0 && LC[i] === from);
+    from = to; i++;
+  }
+}
+
+// Reads the header's blocks into flat lists of ports, pipelines and queues, each knowing its unit.
+function schemaOf(h) {
+  const S = { uarch: Array.isArray(h.units), units: [], ports: [], pipes: [], queues: [] };
+  if (S.uarch) {
+    h.units.forEach((u, ui) => {
+      const U = { name: u.name ? u.name : `unit ${ui}`, ports: [], pipes: [], queues: [] };
+      (u.ports || []).forEach((p, pi) => { const P = { ui, pi, unit: U.name, name: p.name ?? `port ${pi}`, work: p.work ?? '', cap: p.capacity ?? null, f: S.ports.length }; S.ports.push(P); U.ports.push(P); });
+      (u.pipelines || []).forEach((p, k) => { const P = { ui, k, unit: U.name, entry: p.entry ?? '?', stages: p.stages ?? 0, depth: p.depth ?? null, outputs: p.outputs ?? 0, f: S.pipes.length }; S.pipes.push(P); U.pipes.push(P); });
+      (u.queues || []).forEach((q, k) => { const Q = { ui, k, unit: U.name, depth: q.depth ?? null, f: S.queues.length }; S.queues.push(Q); U.queues.push(Q); });
+      S.units.push(U);
+    });
+  } else if (Array.isArray(h.ports)) {
+    const byName = new Map();
+    h.ports.forEach((p, pi) => {
+      let U = byName.get(p.unit);
+      if (!U) { U = { name: p.unit ?? '', ports: [], pipes: [], queues: [] }; byName.set(p.unit, U); S.units.push(U); }
+      const P = { ui: S.units.indexOf(U), pi, unit: U.name, name: p.name ?? `port ${pi}`, work: p.work ?? '', cap: p.capacity ?? null, f: pi };
+      S.ports.push(P); U.ports.push(P);
+    });
+  } else throw new Error('the header has neither "units" nor "ports"');
+  return S;
+}
+
+// Parses the file: header, state lines (the last line written for a cycle wins), events in file order; then the
+// per-line values every row draws from, each instruction's issue/done/commit/squash, and the cycles where anything happens.
+function parse(text) {
+  const lines = text.split('\n');
+  let header = null;
+  const st = [], ev = [];
+  for (let n = 0; n < lines.length; n++) {
+    let s = lines[n];
+    if (s.endsWith('\r')) s = s.slice(0, -1);
+    if (!s.trim()) continue;
+    if (!header) {
+      try { header = JSON.parse(s); } catch (e) { throw new Error(`line ${n + 1}: ${e.message}`); }
+      if (!header || header.vcix_timeline === undefined) throw new Error('line 1 is not a vcix_timeline header');
+      continue;
+    }
+    const m = /^\{"c":(-?\d+)[,}]/.exec(s);
+    const c = m ? +m[1] : undefined;
+    if (m && !(c <= Number.MAX_SAFE_INTEGER)) throw new Error(`line ${n + 1}: cycle ${m[1]} is past 2^53, which a browser cannot count exactly`);
+    if (m) { st.push({ c, raw: s, k: st.length }); continue; }
+    let o;
+    try { o = JSON.parse(s); } catch (e) { throw new Error(`line ${n + 1}: ${e.message}`); }
+    if (!(o.c <= Number.MAX_SAFE_INTEGER)) throw new Error(`line ${n + 1}: cycle ${o.c} is past 2^53, which a browser cannot count exactly`);
+    if (typeof o.e === 'string') { o.n = n + 1; ev.push(o); }
+    else if (typeof o.c === 'number') st.push({ c: o.c, raw: s, k: st.length });
+    else throw new Error(`line ${n + 1}: neither an event nor a state line`);
+  }
+  if (!header) throw new Error('the file is empty');
+  const S = schemaOf(header);
+  st.sort((a, b) => a.c - b.c || a.k - b.k);
+  const win = [];
+  for (const s of st) { if (win.length && win[win.length - 1].c === s.c) win[win.length - 1] = s; else win.push(s); }
+  const N = win.length;
+  const F = () => new Float64Array(N);
+  const D = {
+    adm: S.ports.map(F), held: S.ports.map(F), use: S.ports.map(F), occ: S.ports.map(F),
+    pin: S.pipes.map(F), ptot: S.pipes.map(F), pout: S.pipes.map(F), pmv: S.pipes.map(F),
+    qn: S.queues.map(F), qstep: S.queues.map(F), qsteps: S.queues.map(F), qwait: S.queues.map(F),
+  };
+  const LC = new Float64Array(N), changed = new Uint8Array(N), replayed = new Uint8Array(N);
+
+  const recs = [], byId = new Map(), open = new Set();
+  let issues = 0, commits = 0, squashes = 0, spike = false;
+  const evByCycle = new Map();
+  for (const e of ev) {
+    if (!evByCycle.has(e.c)) evByCycle.set(e.c, []);
+    evByCycle.get(e.c).push(e);
+    if (e.e === 'issue') {
+      issues++;
+      const r = { id: e.id, insn: e.insn ?? '?', issue: e.c, latency: e.latency ?? null, done: e.latency == null ? null : e.c + e.latency, commit: null, squashed: null };
+      recs.push(r); open.add(r);
+      if (!byId.has(e.id)) byId.set(e.id, []);
+      byId.get(e.id).push(r);
+    } else if (e.e === 'commit') {
+      commits++;
+      const list = byId.get(e.id) || [];
+      for (let j = list.length - 1; j >= 0; j--) if (list[j].commit == null && list[j].squashed == null) { list[j].commit = e.c; open.delete(list[j]); break; }
+    } else if (e.e === 'squash') {
+      squashes++;
+      for (const r of [...open]) if (r.id >= e.from) { r.squashed = e.c; open.delete(r); }
+    } else if (e.e === 'spike') spike = true;
+  }
+
+  let prev = null;
+  const uarch = S.uarch;
+  for (let i = 0; i < N; i++) {
+    const w = win[i];
+    LC[i] = w.c;
+    const content = w.raw.replace(/^\{"c":-?\d+,("replayed":1,)?/, '');
+    replayed[i] = /^\{"c":-?\d+,"replayed":1,/.test(w.raw) ? 1 : 0;
+    changed[i] = content !== prev ? 1 : 0;
+    prev = content;
+    const o = JSON.parse(w.raw);
+    if (uarch) {
+      const us = o.units || [];
+      for (const P of S.ports) { const u = us[P.ui]; D.adm[P.f][i] = u?.admitted?.[P.pi] ?? 0; D.held[P.f][i] = u?.held?.[P.pi] ?? 0; }
+      for (const P of S.pipes) {
+        const p = us[P.ui]?.pipelines?.[P.k];
+        if (!p) continue;
+        let t = 0, ou = 0;
+        for (const sr of p.line || []) t += sr[1];
+        for (const r of p.out || []) ou += r;
+        D.pin[P.f][i] = p.in ?? 0; D.ptot[P.f][i] = t; D.pout[P.f][i] = ou; D.pmv[P.f][i] = p.moves ?? 0;
+      }
+      for (const Q of S.queues) {
+        const q = us[Q.ui]?.queues?.[Q.k], cm = q?.commands || [];
+        D.qn[Q.f][i] = cm.length; D.qstep[Q.f][i] = cm.length ? cm[0][2] : NaN; D.qsteps[Q.f][i] = cm.length ? cm[0][3] : NaN;
+        D.qwait[Q.f][i] = q?.waiting?.length ?? 0;
+      }
+    } else {
+      for (const P of S.ports) { D.adm[P.f][i] = o.admitted?.[P.pi] ?? 0; D.held[P.f][i] = o.held?.[P.pi] ?? 0; }
+    }
+    for (const id of o.ready || []) {
+      const list = byId.get(id);
+      if (!list) continue;
+      for (let j = list.length - 1; j >= 0; j--) {
+        const r = list[j];
+        if (r.issue > w.c || (r.squashed != null && r.squashed <= w.c)) continue;
+        if (r.latency == null && r.done == null) r.done = w.c;
+        break;
+      }
+    }
+  }
+  for (const P of S.ports) for (let i = 0; i < N; i++) {
+    D.use[P.f][i] = D.adm[P.f][i] - (i ? D.adm[P.f][i - 1] : 0);
+    D.occ[P.f][i] = D.held[P.f][i] - (i ? D.held[P.f][i - 1] : 0);
+  }
+  const maxOf = a => { let m = 0; for (let i = 0; i < a.length; i++) if (a[i] > m) m = a[i]; return m; };
+  const M = { use: D.use.map(maxOf), pin: D.pin.map(maxOf), ptot: D.ptot.map(maxOf), pout: D.pout.map(maxOf), qn: D.qn.map(maxOf) };
+
+  let lo = Infinity, hi = -Infinity;
+  for (let i = 0; i < N; i++) { lo = Math.min(lo, LC[i]); hi = Math.max(hi, LC[i]); }
+  for (const e of ev) { lo = Math.min(lo, e.c); hi = Math.max(hi, e.c); }
+  for (const r of recs) { if (r.done != null) hi = Math.max(hi, r.done); if (r.commit != null) hi = Math.max(hi, r.commit); }
+  if (!isFinite(lo)) { lo = 0; hi = 0; }
+  for (const r of recs) r.end = r.squashed != null && (r.done == null || r.squashed < r.done) ? r.squashed : r.done ?? r.commit ?? hi + 1;
+
+  recs.sort((a, b) => a.issue - b.issue || a.id - b.id);
+  const heap = [], lanes = [];
+  const push = x => { heap.push(x); let k = heap.length - 1; while (k) { const p = (k - 1) >> 1; if (heap[p][0] < heap[k][0] || (heap[p][0] === heap[k][0] && heap[p][1] <= heap[k][1])) break; [heap[p], heap[k]] = [heap[k], heap[p]]; k = p; } };
+  const pop = () => { const top = heap[0], last = heap.pop(); if (heap.length) { heap[0] = last; let k = 0; for (;;) { const l = 2 * k + 1, r = l + 1; let m = k; const lt = (a, b) => heap[a][0] < heap[b][0] || (heap[a][0] === heap[b][0] && heap[a][1] < heap[b][1]); if (l < heap.length && lt(l, m)) m = l; if (r < heap.length && lt(r, m)) m = r; if (m === k) break; [heap[m], heap[k]] = [heap[k], heap[m]]; k = m; } } return top; };
+  for (const r of recs) {
+    const until = Math.max(r.end, r.commit != null ? r.commit + 1 : -Infinity, r.issue + 1);
+    let lane;
+    if (heap.length && heap[0][0] <= r.issue) lane = pop()[1]; else { lane = lanes.length; lanes.push([]); }
+    r.lane = lane; lanes[lane].push(r); push([until, lane]);
+  }
+  const laneIssue = lanes.map(l => Float64Array.from(l, r => r.issue));
+
+  const ecs = [...evByCycle.keys()].sort((a, b) => a - b);
+  const EC = Float64Array.from(ecs), pI = new Float64Array(ecs.length + 1), pC = new Float64Array(ecs.length + 1), pS = new Float64Array(ecs.length + 1);
+  ecs.forEach((c, k) => {
+    let a = 0, b = 0, d = 0;
+    for (const e of evByCycle.get(c)) { if (e.e === 'issue') a++; else if (e.e === 'commit') b++; else if (e.e === 'squash') d++; }
+    pI[k + 1] = pI[k] + a; pC[k + 1] = pC[k] + b; pS[k + 1] = pS[k] + d;
+  });
+  const HS = [], HE = [];
+  for (let i = 0; i < N; i++) {
+    const start = LC[i] + 1, end = i + 1 < N ? LC[i + 1] : hi + 1;
+    if (end > start && S.pipes.some(P => D.ptot[P.f][i] > 0)) { HS.push(start); HE.push(end); }
+  }
+  const busySet = new Set(ecs);
+  for (let i = 0; i < N; i++) if (changed[i]) busySet.add(LC[i]);
+  const busy = Float64Array.from([...busySet].sort((a, b) => a - b));
+  const squashEv = ev.filter(e => e.e === 'squash');
+  const encodings = header.encodings || [];
+  return { header, S, D, M, LC, changed, replayed, raws: win.map(w => w.raw), lines: st.length, recs, byId, lanes, laneIssue,
+    evByCycle, EC, pI, pC, pS, busy, heldS: Float64Array.from(HS), heldE: Float64Array.from(HE), squashEv, lo, hi, issues, commits, squashes, spike, encodings, stageCache: new Map() };
+}
+
+// Builds the columns: fixed runs of cpc cycles, or with collapsing, idle runs of at least minRun cycles as one column
+// each; a run in which a pipeline holds rows without moving is a stall, not idle: one ordinary column that shows it.
+function buildCols() {
+  const lo = T.lo, hi = T.hi, cpc = V.cpc;
+  if (!V.collapse) {
+    const n = Math.ceil((hi - lo + 1) / cpc);
+    return { n, start: k => lo + k * cpc, end: k => Math.min(hi + 1, lo + (k + 1) * cpc), idle: () => false, of: c => Math.max(0, Math.min(n - 1, Math.floor((c - lo) / cpc))) };
+  }
+  const B = T.busy, S = [], E = [], I = [];
+  let c = lo, bi = 0;
+  while (c <= hi) {
+    while (bi < B.length && B[bi] < c) bi++;
+    const nb = bi < B.length ? B[bi] : hi + 1;
+    const hk = lowerBound(T.heldE, c + 1), stalled = hk < T.heldE.length && T.heldS[hk] < nb;
+    if (nb - c >= V.minRun) { S.push(c); E.push(nb); I.push(stalled ? 0 : 1); c = nb; continue; }
+    let e = Math.min(c + cpc, hi + 1);
+    for (let j = bi; j < B.length && B[j] < e; j++) {
+      const nxt = j + 1 < B.length ? B[j + 1] : hi + 1;
+      if (nxt - B[j] - 1 >= V.minRun) { e = B[j] + 1; break; }
+    }
+    S.push(c); E.push(e); I.push(0); c = e;
+  }
+  const SA = Float64Array.from(S), EA = Float64Array.from(E), IA = Uint8Array.from(I), n = SA.length;
+  return { n, start: k => SA[k], end: k => EA[k], idle: k => IA[k] === 1, of: c => Math.max(0, Math.min(n - 1, lowerBound(SA, c + 1) - 1)) };
+}
+
+function niceStep(want) { for (let p = 1; ; p *= 10) for (const m of [1, 2, 5]) if (m * p >= want) return m * p; }
+function rangeTxt(a, b) { return b - a === 1 ? `cycle ${a}` : `cycles ${a}–${b - 1} (${b - a})`; }
+
+function stageArr(P, s) {
+  let arr = T.stageCache.get(P.f);
+  if (!arr) {
+    arr = Array.from({ length: P.stages }, () => new Float32Array(T.LC.length));
+    T.raws.forEach((raw, i) => {
+      const p = JSON.parse(raw).units?.[P.ui]?.pipelines?.[P.k];
+      for (const [st, r] of p?.line || []) if (st < P.stages) arr[st][i] += r;
+    });
+    T.stageCache.set(P.f, arr);
+  }
+  return arr[s];
+}
+
+function levelAgg(arr, max, color, name, extra) {
+  return (a, b) => {
+    let m = 0, at = -1;
+    forSeg(a, b, i => { const v = i < 0 ? 0 : arr[i]; if (v > m || at < 0) { m = v; at = i; } });
+    return { v: m, n: max > 0 ? Math.min(1, m / max) : 0, color, txt: m ? String(m) : '',
+      t: `${name}\n${rangeTxt(a, b)}\n${b - a > 1 ? 'max ' : ''}${m}${extra ? extra(at) : ''}` };
+  };
+}
+
+// Builds the rows from the schema: per port its use; per pipeline input, stage rows (expandable), output and motion;
+// per queue its commands and the head command's step.
+function buildRows() {
+  const { S, D, M } = T, out = [];
+  out.push({ kind: 'section', label: 'instructions', title: 'One bar per id from issue to done (issue + latency, or the first cycle it is in "ready"), a diamond at its commit, grey struck-through when squashed. Below one pixel per cycle, a column shows the share of its cycles the lane was in flight.', h: SECTION_H });
+  out.push({ kind: 'lanes', h: Math.max(1, T.lanes.length) * LANE_H });
+  for (const U of S.units) {
+    out.push({ kind: 'group', label: U.name, h: GROUP_H });
+    for (const P of U.ports) {
+      const cap = P.cap, name = `${U.name} · port ${P.name}`;
+      out.push({ kind: 'row', label: `port ${P.name}`, title: `${name} — ${P.work}, capacity ${cap ?? 'unlimited'}`, key: `port:${P.f}`, h: ROW_H,
+        agg: (a, b) => {
+          let s = 0, o = 0;
+          forSeg(a, b, (i, f, t, at) => { if (at) { s += D.use[P.f][i]; o += D.occ[P.f][i]; } });
+          const n = b - a, norm = cap != null ? (cap > 0 ? s / (cap * n) : (s ? 1 : 0)) : (M.use[P.f] ? s / (M.use[P.f] * n) : 0);
+          return { v: s, n: Math.min(1, norm), color: C.port, txt: s ? String(s) : '',
+            t: `${name}\n${rangeTxt(a, b)}\nuse ${s} ${P.work} ${cap != null ? `of capacity ${cap * n}` : '(capacity unlimited)'}\nheld ${o}` };
+        } });
+    }
+    for (const P of U.pipes) {
+      const nm = `${U.name} · pipeline ${P.k} (entry ${P.entry})`;
+      const depth = `, depth ${P.depth ?? 'unlimited'}`;
+      out.push({ kind: 'row', label: `pipe ${P.entry} · in`, title: `${nm}: input rows`, key: `pin:${P.f}`, h: ROW_H, agg: levelAgg(D.pin[P.f], M.pin[P.f], C.inp, `${nm}\ninput rows`) });
+      const open = V.expanded.has(P.f);
+      out.push({ kind: 'row', label: `pipe ${P.entry} · stages ${open ? '▾' : '▸'}`, title: `${nm}: rows in its ${P.stages} stages${depth} — click to ${open ? 'fold' : 'expand per stage'}`,
+        key: `ptot:${P.f}`, h: ROW_H, toggle: P.f, agg: levelAgg(D.ptot[P.f], M.ptot[P.f], C.stage, `${nm}\nrows in stages${depth}`) });
+      if (open) for (let s = 0; s < P.stages; s++) {
+        const arr = stageArr(P, s);
+        let mx = 0; for (let i = 0; i < arr.length; i++) if (arr[i] > mx) mx = arr[i];
+        out.push({ kind: 'row', label: `    stage ${s}`, title: `${nm}: rows in stage ${s}`, key: `stage:${P.f}:${s}`, h: ROW_H, agg: levelAgg(arr, mx, C.stage, `${nm}\nrows in stage ${s}`) });
+      }
+      out.push({ kind: 'row', label: `pipe ${P.entry} · out`, title: `${nm}: output rows (all ${P.outputs} outputs)`, key: `pout:${P.f}`, h: ROW_H, agg: levelAgg(D.pout[P.f], M.pout[P.f], C.out, `${nm}\noutput rows`) });
+      out.push({ kind: 'row', label: `pipe ${P.entry} · moved`, title: `${nm}: green = its stages moved, red = it held rows in its stages and did not move`, key: `pmv:${P.f}`, h: ROW_H,
+        agg: (a, b) => {
+          const mv = D.pmv[P.f], tot = D.ptot[P.f];
+          let moved = 0, stalled = 0, k = 0;
+          forSeg(a, b, (i, f, t, at) => {
+            let rest = t - f;
+            if (at) {
+              rest--;
+              const before = i ? mv[i - 1] : 0;
+              if (mv[i] > before) { moved++; k += mv[i] - before; } else if ((i ? tot[i - 1] : 0) > 0) stalled++;
+            }
+            if (i >= 0 && tot[i] > 0) stalled += rest;
+          });
+          const n = b - a;
+          return { v: moved + stalled, moved, stalled, n: Math.max(moved, stalled) / n, color: stalled > moved ? C.stall : C.moved, txt: '',
+            t: `${nm}\n${rangeTxt(a, b)}\nmoved in ${moved} cycle${moved === 1 ? '' : 's'} (${k} stage move${k === 1 ? '' : 's'})\nheld rows without moving in ${stalled} cycle${stalled === 1 ? '' : 's'}` };
+        } });
+    }
+    for (const Q of U.queues) {
+      const nm = `${U.name} · queue ${Q.k} (depth ${Q.depth ?? 'unlimited'})`;
+      out.push({ kind: 'row', label: `queue ${Q.k} · commands`, title: `${nm}: commands in it`, key: `qn:${Q.f}`, h: ROW_H,
+        agg: levelAgg(D.qn[Q.f], Q.depth || M.qn[Q.f], C.queue, `${nm}\ncommands`, i => i >= 0 ? `\nwaiting ${D.qwait[Q.f][i]}` : '') });
+      out.push({ kind: 'row', label: `queue ${Q.k} · head step`, title: `${nm}: the head command's step / steps`, key: `qstep:${Q.f}`, h: ROW_H,
+        agg: (a, b) => {
+          let best = -1, at = -1;
+          forSeg(a, b, i => { if (i < 0) return; const s = D.qstep[Q.f][i], n = D.qsteps[Q.f][i]; if (!isNaN(s)) { const r = n > 0 ? s / n : 0; if (r > best) { best = r; at = i; } } });
+          if (at < 0) return { v: 0, n: 0, color: C.step, txt: '', t: `${nm}\n${rangeTxt(a, b)}\nno command` };
+          const s = D.qstep[Q.f][at], n = D.qsteps[Q.f][at];
+          return { v: 1, n: Math.max(0.15, Math.min(1, best)), color: C.step, txt: String(s),
+            t: `${nm}\n${rangeTxt(a, b)}\nhead command step ${s}/${n}${b - a > 1 ? ' (furthest in the range)' : ''}` };
+        } });
+    }
+  }
+  let y = 0;
+  for (const r of out) { r.y = y; y += r.h; }
+  return { rows: out, height: y + 8 };
+}
+
+function readColors() {
+  const cs = getComputedStyle(document.documentElement), g = n => cs.getPropertyValue(n).trim();
+  C = { bg: g('--bg'), fg: g('--fg'), muted: g('--muted'), line: g('--line'), axis: g('--axis'), panel: g('--panel'), cursor: g('--cursor'), edge: g('--cursor-edge'), idle: g('--idle'),
+    port: g('--port'), inp: g('--in'), stage: g('--stage'), out: g('--out'), moved: g('--moved'), stall: g('--stall'), queue: g('--queue'), step: g('--step'),
+    issue: g('--issue'), commit: g('--commit'), squash: g('--squash'), replay: g('--replay') };
+}
+function insnColor(name) {
+  const k = T.encodings.indexOf(name);
+  let h = 0;
+  if (k >= 0) h = (k * 137.508) % 360; else for (const ch of String(name)) h = (h * 31 + ch.charCodeAt(0)) % 360;
+  return `hsl(${h.toFixed(0)} 62% 58%)`;
+}
+
+function gridW() { return Math.max(1, scroller.clientWidth - LABEL_W); }
+function totalW() { return cols.n * V.colW; }
+function spacerW() { return Math.min(totalW(), MAXW); }
+function virtX() {
+  const max = scroller.scrollWidth - scroller.clientWidth;
+  if (totalW() <= MAXW || max <= 0) return scroller.scrollLeft;
+  return scroller.scrollLeft / max * Math.max(0, totalW() - gridW());
+}
+function setVirtX(x) {
+  const max = scroller.scrollWidth - scroller.clientWidth;
+  x = Math.max(0, Math.min(x, totalW() - gridW()));
+  scroller.scrollLeft = totalW() <= MAXW || max <= 0 ? x : x / Math.max(1, totalW() - gridW()) * max;
+}
+function colX(k, sx) { return LABEL_W + k * V.colW - sx; }
+function cycleX(c, sx) {
+  if (c > T.hi) return colX(cols.n, sx);
+  if (c < T.lo) return colX(0, sx);
+  const k = cols.of(c), a = cols.start(k), b = cols.end(k);
+  return colX(k, sx) + (c - a) / (b - a) * V.colW;
+}
+function cycleAt(x, sx) {
+  const v = x - LABEL_W + sx, k = Math.max(0, Math.min(cols.n - 1, Math.floor(v / V.colW)));
+  const a = cols.start(k), b = cols.end(k);
+  if (cols.idle(k)) return { k, c: a };
+  const fr = Math.max(0, Math.min(0.9999, v / V.colW - k));
+  return { k, c: a + Math.floor(fr * (b - a)) };
+}
+
+function layoutAll() {
+  layout = buildRows();
+  $('spacer').style.width = (LABEL_W + spacerW()) + 'px';
+  $('spacer').style.height = (AXIS_H + layout.height) + 'px';
+}
+function redraw() { if (!raf) raf = requestAnimationFrame(() => { raf = 0; draw(); }); }
+
+// Draws the visible window: collapsed-column marks, lanes, rows, squash marks, cursor, then the fixed axis and labels.
+function draw() {
+  const W = scroller.clientWidth, H = scroller.clientHeight, dpr = window.devicePixelRatio || 1;
+  if (cv.width !== Math.round(W * dpr) || cv.height !== Math.round(H * dpr)) { cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); cv.style.width = W + 'px'; cv.style.height = H + 'px'; }
+  const ctx = cv.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.fillStyle = C.bg; ctx.fillRect(0, 0, W, H);
+  if (!T) return;
+  const sx = virtX(), sy = scroller.scrollTop, cw = V.colW;
+  const k0 = Math.max(0, Math.floor(sx / cw)), k1 = Math.min(cols.n - 1, Math.floor((sx + gridW()) / cw));
+  const cA = cols.start(k0), cB = cols.end(k1);
+  ctx.font = '11px system-ui, sans-serif'; ctx.textBaseline = 'middle';
+
+  ctx.save(); ctx.beginPath(); ctx.rect(LABEL_W, AXIS_H, W - LABEL_W, H - AXIS_H); ctx.clip();
+  const top = AXIS_H - sy;
+  for (let k = k0; k <= k1; k++) if (cols.idle(k)) {
+    const x = colX(k, sx);
+    ctx.fillStyle = C.axis; ctx.fillRect(x, AXIS_H, cw, H);
+    ctx.strokeStyle = C.idle; ctx.lineWidth = 1;
+    ctx.beginPath(); for (let y = AXIS_H - (sy % 8); y < H; y += 8) { ctx.moveTo(x, y + cw); ctx.lineTo(x + cw, y); } ctx.stroke();
+  }
+  for (const r of layout.rows) {
+    const y = top + r.y;
+    if (y + r.h < AXIS_H || y > H) continue;
+    if (r.kind === 'group' || r.kind === 'section') { ctx.fillStyle = C.line; ctx.fillRect(LABEL_W, y + r.h - 1, W, 1); continue; }
+    if (r.kind === 'lanes') { drawLanes(ctx, y, sx, cA, cB, H, k0, k1); continue; }
+    for (let k = k0; k <= k1; k++) {
+      if (cols.idle(k)) continue;
+      const g = r.agg(cols.start(k), cols.end(k));
+      if (!g.v) continue;
+      const x = colX(k, sx);
+      if (g.moved !== undefined && g.moved && g.stalled) {
+        const n = cols.end(k) - cols.start(k);
+        ctx.fillStyle = `rgba(${C.moved}, ${0.2 + 0.8 * g.moved / n})`; ctx.fillRect(x + 0.5, y + 1, cw - 1, (r.h - 2) / 2);
+        ctx.fillStyle = `rgba(${C.stall}, ${0.2 + 0.8 * g.stalled / n})`; ctx.fillRect(x + 0.5, y + 1 + (r.h - 2) / 2, cw - 1, (r.h - 2) / 2);
+      } else {
+        ctx.fillStyle = `rgba(${g.color}, ${0.25 + 0.75 * g.n})`; ctx.fillRect(x + 0.5, y + 1, Math.max(1, cw - 1), r.h - 2);
+      }
+      if (g.txt && cw >= 7 * g.txt.length + 4) { ctx.fillStyle = g.n > 0.55 ? '#fff' : C.fg; ctx.textAlign = 'center'; ctx.fillText(g.txt, x + cw / 2, y + r.h / 2); }
+    }
+    ctx.fillStyle = C.line; ctx.fillRect(LABEL_W, y + r.h - 0.5, W, 0.5);
+  }
+  for (const e of T.squashEv) {
+    if (e.c < cA || e.c >= cB) continue;
+    const x = cycleX(e.c, sx);
+    ctx.fillStyle = `rgba(${C.squash}, 0.9)`; ctx.fillRect(x, AXIS_H, 2, H);
+  }
+  if (V.cursor != null) {
+    const k = cols.of(V.cursor), x = colX(k, sx);
+    ctx.fillStyle = C.cursor; ctx.fillRect(x, AXIS_H, cw, H);
+    const xc = cycleX(V.cursor, sx), w = cols.idle(k) ? cw : Math.max(1, cw / (cols.end(k) - cols.start(k)));
+    ctx.strokeStyle = C.edge; ctx.lineWidth = 1; ctx.strokeRect(xc + 0.5, AXIS_H + 0.5, w - 1, H);
+  }
+  ctx.restore();
+
+  ctx.fillStyle = C.axis; ctx.fillRect(0, 0, W, AXIS_H);
+  ctx.save(); ctx.beginPath(); ctx.rect(LABEL_W, 0, W - LABEL_W, AXIS_H); ctx.clip();
+  for (const e of T.squashEv) {
+    const x0 = cycleX(e.since ?? e.c, sx), x1 = cycleX(e.c, sx);
+    ctx.fillStyle = `rgba(${C.replay}, 0.35)`; ctx.fillRect(x0, 0, Math.max(2, x1 - x0), AXIS_H);
+  }
+  const step = niceStep(Math.ceil(90 / cw));
+  ctx.fillStyle = C.fg; ctx.textAlign = 'left';
+  for (let k = Math.floor(k0 / step) * step; k <= k1; k += step) {
+    const x = colX(k, sx);
+    ctx.fillStyle = C.line; ctx.fillRect(x, 0, 1, 20);
+    ctx.fillStyle = C.fg; ctx.fillText(cols.idle(k) ? `${cols.start(k)}…` : String(cols.start(k)), x + 3, 10);
+  }
+  for (let k = k0; k <= k1; k++) {
+    const x = colX(k, sx), a = cols.start(k), b = cols.end(k);
+    if (cols.idle(k)) { ctx.fillStyle = C.idle; ctx.fillRect(x, 22, cw, 22); if (cw > 18) { ctx.fillStyle = C.fg; ctx.textAlign = 'center'; ctx.fillText(`${b - a}`, x + cw / 2, 33); ctx.textAlign = 'left'; } continue; }
+    const i0 = lowerBound(T.EC, a), i1 = lowerBound(T.EC, b);
+    if (i0 === i1) continue;
+    const ni = T.pI[i1] - T.pI[i0], nc = T.pC[i1] - T.pC[i0], ns = T.pS[i1] - T.pS[i0];
+    if (ni) { ctx.fillStyle = `rgb(${C.issue})`; ctx.fillRect(x + 1, 24, Math.max(1, cw - 2), 5); }
+    if (nc) { ctx.fillStyle = `rgb(${C.commit})`; ctx.fillRect(x + 1, 31, Math.max(1, cw - 2), 5); }
+    if (ns) { ctx.fillStyle = `rgb(${C.squash})`; ctx.fillRect(x + 1, 38, Math.max(1, cw - 2), 5); }
+  }
+  if (V.cursor != null) { const x = colX(cols.of(V.cursor), sx); ctx.strokeStyle = C.edge; ctx.lineWidth = 2; ctx.strokeRect(x + 1, 1, cw - 2, AXIS_H - 2); }
+  ctx.restore();
+  ctx.fillStyle = C.line; ctx.fillRect(0, AXIS_H - 1, W, 1);
+
+  ctx.fillStyle = C.panel; ctx.fillRect(0, AXIS_H, LABEL_W, H - AXIS_H);
+  ctx.save(); ctx.beginPath(); ctx.rect(0, AXIS_H, LABEL_W, H - AXIS_H); ctx.clip();
+  ctx.textAlign = 'left';
+  for (const r of layout.rows) {
+    const y = top + r.y;
+    if (y + r.h < AXIS_H || y > H) continue;
+    if (r.kind === 'section') { ctx.font = '600 11px system-ui, sans-serif'; ctx.fillStyle = C.muted; ctx.fillText(`INSTRUCTIONS · ${T.recs.length} ids in ${T.lanes.length} lanes`, 8, y + r.h / 2); }
+    else if (r.kind === 'group') { ctx.font = '600 12px system-ui, sans-serif'; ctx.fillStyle = C.fg; ctx.fillText(r.label, 8, y + r.h / 2 + 1); }
+    else if (r.kind === 'row') { ctx.font = '11px system-ui, sans-serif'; ctx.fillStyle = r.toggle !== undefined ? C.edge : C.fg; ctx.fillText(r.label, 16, y + r.h / 2); }
+    ctx.fillStyle = C.line; ctx.fillRect(0, y + r.h - 0.5, LABEL_W, 0.5);
+  }
+  ctx.restore();
+  ctx.fillStyle = C.axis; ctx.fillRect(0, 0, LABEL_W, AXIS_H);
+  ctx.font = '11px system-ui, sans-serif'; ctx.fillStyle = C.muted; ctx.textAlign = 'left';
+  ctx.fillText(`cycle · ${V.cpc}/column${V.collapse ? ' · idle collapsed' : ''}`, 8, 10);
+  ctx.fillStyle = `rgb(${C.issue})`; ctx.fillText('issue', 8, 27); ctx.fillStyle = `rgb(${C.commit})`; ctx.fillText('commit', 48, 27); ctx.fillStyle = `rgb(${C.squash})`; ctx.fillText('squash', 98, 27);
+  ctx.fillStyle = `rgb(${C.replay})`; ctx.fillText('replayed', 150, 27);
+  ctx.fillStyle = C.line; ctx.fillRect(LABEL_W - 1, 0, 1, H);
+}
+
+function laneRange(l, cA, cB) {
+  const L = T.lanes[l], I = T.laneIssue[l];
+  return [Math.max(0, lowerBound(I, cA) - 1), lowerBound(I, cB), L];
+}
+// Draws each visible lane's bars and commit marks; when a cycle is narrower than a pixel, each column instead shows
+// the share of its cycles the lane's instructions were in flight.
+function drawLanes(ctx, y0, sx, cA, cB, H, k0, k1) {
+  const l0 = Math.max(0, Math.floor((AXIS_H - y0) / LANE_H)), l1 = Math.min(T.lanes.length - 1, Math.floor((H - y0) / LANE_H));
+  const dense = V.colW / V.cpc < 1, busy = dense ? new Float64Array(k1 - k0 + 1) : null;
+  for (let l = l0; l <= l1; l++) {
+    const y = y0 + l * LANE_H, [i0, i1, L] = laneRange(l, cA, cB);
+    if (dense) {
+      busy.fill(0);
+      for (let i = i0; i < i1; i++) {
+        const r = L[i], a = Math.max(r.issue, cA), b = Math.min(Math.max(r.end, r.issue + 1), cB);
+        for (let k = cols.of(a); a < b && k <= k1; k++) { const o = Math.min(b, cols.end(k)) - Math.max(a, cols.start(k)); if (o > 0 && k >= k0) busy[k - k0] += o; if (cols.end(k) >= b) break; }
+      }
+      for (let k = k0; k <= k1; k++) if (busy[k - k0] > 0) {
+        ctx.fillStyle = `rgba(${C.issue}, ${0.25 + 0.75 * Math.min(1, busy[k - k0] / (cols.end(k) - cols.start(k)))})`;
+        ctx.fillRect(colX(k, sx) + 0.5, y + 2, V.colW - 1, LANE_H - 4);
+      }
+      continue;
+    }
+    for (let i = i0; i < i1; i++) {
+      const r = L[i];
+      const x0 = cycleX(r.issue, sx), x1 = cycleX(r.end, sx), w = Math.max(2, x1 - x0);
+      if (x0 + w >= LABEL_W && x0 <= ctx.canvas.width) {
+        if (r.squashed != null) {
+          ctx.fillStyle = C.idle; ctx.fillRect(x0, y + 2, w, LANE_H - 4);
+          ctx.strokeStyle = `rgb(${C.squash})`; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(x0, y + LANE_H / 2); ctx.lineTo(x0 + w, y + LANE_H / 2); ctx.stroke();
+        } else {
+          ctx.fillStyle = insnColor(r.insn); ctx.globalAlpha = r.done == null ? 0.45 : 1; ctx.fillRect(x0, y + 2, w, LANE_H - 4); ctx.globalAlpha = 1;
+        }
+        const label = `${r.insn} #${r.id}${r.squashed != null ? ' ✕' : ''}`;
+        const lx = Math.max(x0, LABEL_W) + 3, room = x0 + w - lx - 2;
+        if (room > 30) { ctx.save(); ctx.beginPath(); ctx.rect(lx - 3, y, room + 3, LANE_H); ctx.clip(); ctx.fillStyle = r.squashed != null ? C.fg : '#111'; ctx.textAlign = 'left'; ctx.fillText(label, lx, y + LANE_H / 2); ctx.restore(); }
+      }
+      if (r.commit != null) {
+        const k = cols.of(r.commit), cwc = cols.idle(k) ? 0 : V.colW / (cols.end(k) - cols.start(k));
+        const xc = cycleX(r.commit, sx) + cwc / 2, ym = y + LANE_H / 2, d = Math.min(5, Math.max(2, cwc / 2));
+        ctx.fillStyle = `rgb(${C.commit})`; ctx.strokeStyle = C.bg; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(xc, ym - d - 1); ctx.lineTo(xc + d, ym); ctx.lineTo(xc, ym + d + 1); ctx.lineTo(xc - d, ym); ctx.closePath(); ctx.fill(); if (d > 3) ctx.stroke();
+      }
+    }
+  }
+}
+
+function recAt(lane, c) {
+  if (lane < 0 || lane >= T.lanes.length) return null;
+  const L = T.lanes[lane], I = T.laneIssue[lane];
+  const i = lowerBound(I, c + 1) - 1;
+  for (let j = i; j >= Math.max(0, i - 1); j--) { const r = L[j]; if (r && r.issue <= c && (c < r.end || c === r.issue || c === r.commit)) return r; }
+  return null;
+}
+function recText(r) {
+  const done = r.done != null ? `done ${r.done}` : r.squashed != null ? 'squashed; whether it was done before is not kept (the replay rewrote those cycles)' : r.commit != null ? 'done not seen in "ready" (drawn to its commit)' : 'not done by the end of the file';
+  return `${r.insn} #${r.id}\nissue ${r.issue}, latency ${r.latency ?? 'unknown'}, ${done}\n` +
+    (r.commit != null ? `commit ${r.commit}` : r.squashed != null ? `squashed at ${r.squashed}` : 'not committed');
+}
+
+function hit(ev) {
+  const rect = scroller.getBoundingClientRect(), x = ev.clientX - rect.left, y = ev.clientY - rect.top;
+  if (!T || x > scroller.clientWidth || y > scroller.clientHeight) return null;
+  const sx = virtX(), sy = scroller.scrollTop;
+  const cyc = x >= LABEL_W ? cycleAt(x, sx) : null;
+  if (y < AXIS_H) return { area: 'axis', cyc };
+  const cy = y - AXIS_H + sy;
+  const row = layout.rows.find(r => cy >= r.y && cy < r.y + r.h);
+  return { area: x < LABEL_W ? 'label' : 'grid', cyc, row, cy, x };
+}
+function axisText(k) {
+  const a = cols.start(k), b = cols.end(k);
+  if (cols.idle(k)) return `${rangeTxt(a, b)}\ncollapsed: no event and no state change`;
+  const i0 = lowerBound(T.EC, a), i1 = lowerBound(T.EC, b);
+  let s = `${rangeTxt(a, b)}\nissues ${T.pI[i1] - T.pI[i0]}, commits ${T.pC[i1] - T.pC[i0]}, squashes ${T.pS[i1] - T.pS[i0]}`;
+  for (const e of T.squashEv) if (e.c >= a && e.c < b) s += `\nsquash at ${e.c}: ids ≥ ${e.from}, replays from cycle ${e.since}`;
+  return s;
+}
+function tipFor(h) {
+  if (!h) return '';
+  if (h.area === 'axis') return h.cyc ? axisText(h.cyc.k) : '';
+  if (!h.row) return '';
+  if (h.area === 'label') return h.row.title || h.row.label || '';
+  const k = h.cyc.k;
+  if (h.row.kind === 'lanes') {
+    const r = recAt(Math.floor((h.cy - h.row.y) / LANE_H), h.cyc.c);
+    return r ? recText(r) : '';
+  }
+  if (h.row.kind !== 'row') return '';
+  if (cols.idle(k)) return `${h.row.title}\n${rangeTxt(cols.start(k), cols.end(k))}\ncollapsed: no event and no state change`;
+  return h.row.agg(cols.start(k), cols.end(k)).t;
+}
+
+function opt(o, k) { return o[k] == null ? '—' : o[k]; }
+function insnOf(id, c) {
+  const list = T.byId.get(id);
+  if (!list) return '?';
+  for (let j = list.length - 1; j >= 0; j--) if (list[j].issue <= c) return list[j].insn;
+  return list[0].insn;
+}
+
+// Fills the side panel with the forward-filled state at the cursor cycle, that cycle's events and the ids in flight.
+function renderPanel() {
+  panelRaf = 0;
+  const P = $('panel');
+  if (!T || V.cursor == null) { P.innerHTML = '<div class="none">No cycle selected: click a column.</div>'; return; }
+  const c = V.cursor, i = lineAt(c), at = i >= 0 && T.LC[i] === c, { S, D } = T;
+  const h = [];
+  h.push(`<h3 id="pc">Cycle ${c}</h3>`);
+  h.push(`<div class="meta" id="pstate">${i < 0 ? 'no state line yet' : at ? `state line written for this cycle${T.replayed[i] ? ' (replayed after a squash)' : ''}` : `forward-filled from the state line at cycle ${T.LC[i]}`}</div>`);
+  const evs = T.evByCycle.get(c) || [];
+  h.push('<h4>Events this cycle</h4>');
+  if (!evs.length) h.push('<div class="none">none</div>');
+  else {
+    h.push('<ul id="pevents">');
+    for (const e of evs) {
+      if (e.e === 'issue') h.push(`<li>issue <b>#${e.id}</b> ${esc(e.insn)}, latency ${e.latency ?? 'unknown'}</li>`);
+      else if (e.e === 'commit') h.push(`<li>commit <b>#${e.id}</b> ${esc(insnOf(e.id, c))}</li>`);
+      else if (e.e === 'squash') h.push(`<li>squash ids ≥ ${e.from} (issued since cycle ${e.since})</li>`);
+      else if (e.e === 'spike') h.push('<li>Spike marker</li>');
+      else h.push(`<li>${esc(JSON.stringify(e))}</li>`);
+    }
+    h.push('</ul>');
+  }
+  const fl = T.recs.filter(r => r.issue <= c && (r.commit == null || c <= r.commit) && (r.squashed == null || c <= r.squashed));
+  h.push(`<h4>In flight: issued, committing or squashed at this cycle or later (${fl.length})</h4>`);
+  if (!fl.length) h.push('<div class="none">none</div>');
+  else {
+    h.push('<table id="pinflight"><tr><th>id</th><th>insn</th><th>issue</th><th>done</th><th>commit</th></tr>');
+    for (const r of fl.slice(0, 200)) h.push(`<tr><td>#${r.id}</td><td>${esc(r.insn)}</td><td>${r.issue}</td><td>${r.done ?? '—'}</td><td>${r.commit ?? (r.squashed != null ? 'squashed ' + r.squashed : '—')}</td></tr>`);
+    h.push('</table>');
+    if (fl.length > 200) h.push(`<div class="none">… ${fl.length - 200} more</div>`);
+  }
+  const o = i >= 0 ? JSON.parse(T.raws[i]) : null;
+  if (o && Array.isArray(o.ready)) h.push(`<h4>Ready (done, not committed)</h4><div id="pready">${o.ready.length ? o.ready.map(id => '#' + id).join(' ') : '<span class="none">none</span>'}</div>`);
+  for (const U of S.units) {
+    h.push(`<details open><summary>${esc(U.name)}</summary>`);
+    if (U.ports.length) {
+      h.push('<table class="sub"><tr><th>port</th><th>work</th><th>cap</th><th>use</th><th>admitted Σ</th><th>held</th><th>held Σ</th></tr>');
+      for (const p of U.ports) {
+        const use = at ? D.use[p.f][i] : 0, occ = at ? D.occ[p.f][i] : 0;
+        h.push(`<tr data-port="${esc(U.name + '/' + p.name)}"><td>${esc(p.name)}</td><td>${esc(p.work)}</td><td>${p.cap ?? '∞'}</td><td class="${use ? 'hl' : ''}">${use}</td><td>${i >= 0 ? D.adm[p.f][i] : 0}</td><td>${occ}</td><td>${i >= 0 ? D.held[p.f][i] : 0}</td></tr>`);
+      }
+      h.push('</table>');
+    }
+    for (const p of U.pipes) {
+      const s = o?.units?.[p.ui]?.pipelines?.[p.k];
+      const mvd = at ? D.pmv[p.f][i] - (i ? D.pmv[p.f][i - 1] : 0) : 0;
+      h.push(`<div class="sub" data-pipe="${esc(U.name + '/' + p.entry + '/' + p.k)}"><b>pipeline ${p.k}</b> entry ${esc(p.entry)} · ${p.stages} stages · depth ${p.depth ?? '∞'} · ${p.outputs} output${p.outputs === 1 ? '' : 's'}`);
+      if (!s) h.push('<div class="none">no state</div>');
+      else {
+        const tot = (s.line || []).reduce((t, x) => t + x[1], 0);
+        h.push(`<table><tr><th>in</th><th>stages Σ</th><th>out</th><th>moves</th></tr><tr><td>${s.in}</td><td>${tot}</td><td>${esc((s.out || []).join(' / '))}</td><td>${s.moves}${mvd ? ` (+${mvd} this cycle)` : ''}</td></tr></table>`);
+        h.push(`<div>stage:rows ${(s.line || []).length ? s.line.map(x => `${x[0]}:${x[1]}`).join('  ') : '<span class="none">empty</span>'}</div>`);
+      }
+      h.push('</div>');
+    }
+    for (const q of U.queues) {
+      const s = o?.units?.[q.ui]?.queues?.[q.k];
+      h.push(`<div class="sub" data-queue="${esc(U.name + '/' + q.k)}"><b>queue ${q.k}</b> · depth ${q.depth ?? '∞'}`);
+      const cm = s?.commands || [];
+      if (!cm.length) h.push('<div class="none">no commands</div>');
+      else {
+        h.push('<table><tr><th>id</th><th>insn</th><th>arrives</th><th>step</th><th>done</th><th>started</th></tr>');
+        for (const x of cm) h.push(`<tr><td>#${x[0]}</td><td>${esc(insnOf(x[0], c))}</td><td>${x[1]}</td><td>${x[2]}/${x[3]}</td><td>${x[4]}</td><td>${x[5] ? 'yes' : 'no'}</td></tr>`);
+        h.push('</table>');
+      }
+      h.push(`<div>waiting: ${(s?.waiting || []).length ? s.waiting.map(id => `#${id} ${esc(insnOf(id, c))}`).join(', ') : '<span class="none">none</span>'}</div></div>`);
+    }
+    h.push('</details>');
+  }
+  if (o) h.push(`<details><summary>raw state line</summary><pre style="white-space:pre-wrap;word-break:break-all;font-size:11px">${esc(T.raws[i])}</pre></details>`);
+  P.innerHTML = h.join('');
+}
+
+function setCursor(c, reveal = true) {
+  if (!T) return;
+  V.cursor = Math.max(T.lo, Math.min(T.hi, Math.round(c)));
+  $('jump').value = V.cursor;
+  if (reveal) {
+    const k = cols.of(V.cursor), x = k * V.colW, sx = virtX(), gw = gridW();
+    if (x < sx || x + V.colW > sx + gw) setVirtX(x - gw / 2);
+  }
+  redraw();
+  if (!panelRaf) panelRaf = requestAnimationFrame(renderPanel);
+}
+function stepCursor(d) {
+  if (V.cursor == null) return setCursor(T.lo);
+  let c = V.cursor + d;
+  if (V.collapse && d > 0) { const k = cols.of(V.cursor); if (cols.idle(k)) c = Math.max(c, cols.end(k)); }
+  if (V.collapse && d < 0) { const k = cols.of(c); if (cols.idle(k)) c = cols.start(k); }
+  setCursor(c);
+}
+function stepChange(d) {
+  if (!T) return;
+  const c = V.cursor ?? T.lo, B = T.busy;
+  const j = d > 0 ? lowerBound(B, c + 1) : lowerBound(B, c) - 1;
+  if (j >= 0 && j < B.length) setCursor(B[j]);
+}
+function keepCenter(fn) {
+  if (!T) return fn();
+  const center = V.cursor != null ? V.cursor : cycleAt(LABEL_W + gridW() / 2, virtX()).c;
+  fn();
+  cols = buildCols(); layoutAll();
+  setVirtX(cols.of(center) * V.colW - gridW() / 2);
+  redraw();
+}
+function setPlaying(on) {
+  clearInterval(playTimer); playTimer = 0;
+  $('play').textContent = on ? '❚❚ pause' : '▶ play';
+  if (!on || !T) return;
+  playTimer = setInterval(() => { if (V.cursor != null && V.cursor >= T.hi) return setPlaying(false); stepCursor(1); }, 1000 / +$('speed').value);
+}
+
+function showSummary() {
+  const h = T.header, S = T.S, blocks = S.uarch ? `${S.units.length} units · ${S.ports.length} ports · ${S.pipes.length} pipelines · ${S.queues.length} queues` : `hand-written model · ${S.ports.length} ports in ${S.units.length} units`;
+  const sim = T.spike
+    ? '<div class="sim spike" id="ssim">Spike run (Spike marker present): Spike runs each instruction to its end before issuing the next, so its cycles are serialized per instruction — no overlap with the core.</div>'
+    : '<div class="sim" id="ssim">No Spike marker: not a Spike run (e.g. gem5, where the core may overlap instructions).</div>';
+  const rep = T.raws.filter((r, i) => T.replayed[i]).length;
+  $('summary').innerHTML = `<span class="title" id="smodel">${esc(h.model ?? '(unnamed model)')}</span> <span class="counts">· ${esc(T.name)} · ${blocks} · ${(h.encodings || []).length} encodings</span>${sim}` +
+    `<div class="counts" id="scounts">${T.LC.length || T.issues ? `cycles ${T.lo}–${T.hi} (${T.hi - T.lo + 1})` : 'no cycles recorded'} · ${T.issues} issues · ${T.commits} commits · ${T.squashes} squashes · ${T.lines} state lines (${T.LC.length} cycles${rep ? `, ${rep} replayed` : ''}) · loaded in ${T.ms.toFixed(0)} ms</div>`;
+}
+
+async function loadFile(file) {
+  setPlaying(false);
+  const t0 = performance.now();
+  try {
+    const text = await file.text();
+    const t = parse(text);
+    t.name = file.name; t.ms = performance.now() - t0;
+    T = t; V.expanded.clear(); V.cursor = null;
+    readColors(); cols = buildCols(); layoutAll();
+    scroller.scrollLeft = 0; scroller.scrollTop = 0;
+    $('drop').className = 'hidden';
+    showSummary();
+    setCursor(T.EC.length ? T.EC[0] : T.lo);
+    document.title = `${T.header.model ?? 'timeline'} · vcix timeline viewer`;
+  } catch (e) {
+    $('summary').innerHTML = `<span class="err" id="serr">Cannot read ${esc(file.name)}: ${esc(e.message)}</span>`;
+    console.error(e);
+  }
+}
+
+CPC.forEach(n => { const o = document.createElement('option'); o.textContent = n; $('cpc').appendChild(o); });
+$('file').addEventListener('change', e => { if (e.target.files[0]) loadFile(e.target.files[0]); });
+$('cpc').addEventListener('change', e => keepCenter(() => { V.cpc = +e.target.value; }));
+$('colw').addEventListener('input', e => keepCenter(() => { V.colW = +e.target.value; }));
+$('collapse').addEventListener('change', e => keepCenter(() => { V.collapse = e.target.checked; }));
+$('minrun').addEventListener('change', e => keepCenter(() => { V.minRun = Math.max(1, +e.target.value || 1); }));
+$('fit').addEventListener('click', () => {
+  if (!T) return;
+  const need = (T.hi - T.lo + 1) / Math.max(1, Math.floor(gridW() / V.colW));
+  const n = CPC.find(x => x >= need) ?? CPC[CPC.length - 1];
+  $('cpc').value = n; keepCenter(() => { V.cpc = n; });
+});
+const jump = () => { const v = +$('jump').value; if (T && isFinite(v)) setCursor(v); };
+$('go').addEventListener('click', jump);
+$('jump').addEventListener('keydown', e => { if (e.key === 'Enter') jump(); });
+$('prev').addEventListener('click', () => stepChange(-1));
+$('next').addEventListener('click', () => stepChange(1));
+$('play').addEventListener('click', () => setPlaying(!playTimer));
+$('speed').addEventListener('change', () => { if (playTimer) setPlaying(true); });
+scroller.addEventListener('scroll', () => { tip.style.display = 'none'; redraw(); });
+window.addEventListener('resize', () => { if (T) layoutAll(); redraw(); });
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => { readColors(); redraw(); });
+scroller.addEventListener('mousemove', e => {
+  const t = tipFor(hit(e));
+  if (!t) { tip.style.display = 'none'; return; }
+  tip.textContent = t; tip.style.display = 'block';
+  const w = tip.offsetWidth, hgt = tip.offsetHeight;
+  tip.style.left = Math.min(e.clientX + 14, innerWidth - w - 4) + 'px';
+  tip.style.top = Math.min(e.clientY + 14, innerHeight - hgt - 4) + 'px';
+});
+scroller.addEventListener('mouseleave', () => { tip.style.display = 'none'; });
+scroller.addEventListener('click', e => {
+  const h = hit(e);
+  if (!h) return;
+  if (h.area === 'label' && h.row && h.row.toggle !== undefined) {
+    if (V.expanded.has(h.row.toggle)) V.expanded.delete(h.row.toggle); else V.expanded.add(h.row.toggle);
+    layoutAll(); redraw(); return;
+  }
+  if (h.cyc) setCursor(h.cyc.c, false);
+  scroller.focus();
+});
+scroller.addEventListener('wheel', e => {
+  if (!T || !(e.ctrlKey || e.metaKey)) return;
+  e.preventDefault();
+  keepCenter(() => { V.colW = Math.max(3, Math.min(64, Math.round(V.colW * (e.deltaY < 0 ? 1.25 : 0.8)))); $('colw').value = V.colW; });
+}, { passive: false });
+document.addEventListener('keydown', e => {
+  if (!T || (e.target.tagName === 'INPUT' && e.target.type !== 'checkbox' && e.target.type !== 'range') || e.target.tagName === 'SELECT') return;
+  if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+    e.preventDefault();
+    const d = e.key === 'ArrowRight' ? 1 : -1;
+    if (e.shiftKey) { const k = cols.of(V.cursor ?? T.lo) + d; setCursor(cols.start(Math.max(0, Math.min(cols.n - 1, k)))); } else stepCursor(d);
+  } else if (e.key === 'Home') { e.preventDefault(); setCursor(T.lo); }
+  else if (e.key === 'End') { e.preventDefault(); setCursor(T.hi); }
+  else if (e.key === 'n') stepChange(1);
+  else if (e.key === 'p') stepChange(-1);
+  else if (e.key === ' ') { e.preventDefault(); setPlaying(!playTimer); }
+});
+const drop = $('drop');
+window.addEventListener('dragover', e => { e.preventDefault(); drop.className = 'over' + (T ? ' overlay' : ''); });
+window.addEventListener('dragleave', e => { if (!e.relatedTarget) drop.className = T ? 'hidden' : ''; });
+window.addEventListener('drop', e => { e.preventDefault(); drop.className = T ? 'hidden' : ''; const f = e.dataTransfer.files[0]; if (f) loadFile(f); });
+readColors();
+redraw();
+window.vcixViewer = {
+  get loaded() { return !!T; },
+  point(key, cycle) {
+    const r = layout.rows.find(x => x.key === key);
+    if (!r) return null;
+    const rect = scroller.getBoundingClientRect(), k = cols.of(cycle);
+    const x = cycleX(cycle, virtX()) + Math.min(V.colW, V.colW / (cols.end(k) - cols.start(k))) / 2;
+    return { x: rect.left + x, y: rect.top + AXIS_H + r.y - scroller.scrollTop + r.h / 2 };
+  },
+  recPoint(id) {
+    const q = T.recs.find(x => x.id === id), r = layout.rows.find(x => x.kind === 'lanes'), rect = scroller.getBoundingClientRect();
+    return q && { x: rect.left + cycleX(q.issue, virtX()) + 2, y: rect.top + AXIS_H + r.y - scroller.scrollTop + q.lane * LANE_H + LANE_H / 2 };
+  },
+  labelPoint(key) { const r = layout.rows.find(x => x.key === key); const rect = scroller.getBoundingClientRect(); return r && { x: rect.left + 40, y: rect.top + AXIS_H + r.y - scroller.scrollTop + r.h / 2 }; },
+  columns() { return { n: cols.n, first: cols.start(0) }; },
+  reveal(cycle, key) { setVirtX(cols.of(cycle) * V.colW - gridW() / 2); const r = layout.rows.find(x => x.key === key); if (r) scroller.scrollTop = Math.max(0, r.y - 40); draw(); },
+};
+</script>
+</body>
+</html>

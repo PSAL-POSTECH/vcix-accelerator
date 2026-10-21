@@ -1070,6 +1070,67 @@ Not goals:
   system-level simulator downstream.
 - Any channel between core and accelerator other than the two custom opcodes.
 
+## Watching a run cycle by cycle: the timeline
+
+`vcix_timeline: <path>` in the machine description makes the run write a
+timeline of the model; open it in
+[`tools/timeline/viewer.html`](tools/timeline/viewer.html) (one file, no
+network: open it in a browser and drop the timeline on it). It works for any
+model; nothing in the model changes, and without the key the run is the same
+([`tests/timeline/run.sh`](tests/timeline/run.sh) compares stats.txt and both
+simulators' output with and without it).
+
+The file is JSON Lines
+([`vcix_accel.hpp:172-226`](include/vcix_accel.hpp)):
+
+- the first line names the model, its encodings and its blocks: for a
+  vcix_uarch model each unit's ports, its pipelines (by their entry port) and
+  its queues ([`vcix_uarch.hpp`](include/vcix_uarch.hpp) `timeline_blocks`);
+  for any other model its ports;
+- one line per issue, commit and squash, with its cycle and id;
+- one line per cycle whose state changed: the state at the end of that cycle.
+  What each port admitted and held so far; each pipeline's input rows, its
+  rows per stage and output rows, and its moves; each queue's commands with
+  the step the head is at; the ids done and not yet committed. A cycle with
+  no line is as the last line before it.
+
+A tpuv6e run on gem5 (`tests/tpuv6e/mxu_rate.S`), the first issue:
+
+```
+{"e":"issue","c":13492,"id":1,"insn":"vmatprep","latency":1}
+{"c":13492,"units":[{"admitted":[0,0],"held":[0,0],"pipelines":[{"in":0,"line":[],"out":[0,0],"moves":0}], ...
+{"e":"commit","c":13493,"id":1}
+```
+
+The viewer draws, from the first line alone, a bar per instruction from issue
+to done with its commit, and a row per block over cycles: a port's use in the
+cycle against its capacity, a pipeline's rows (per stage on a click) and
+whether it moved, a queue's commands. Clicking a cycle shows every block's
+state then; it plays, zooms, jumps, and can fold runs of cycles in which
+nothing happens.
+
+What a timeline is, by simulator:
+
+- **gem5**: the cycles of the run. After a squash the replayed cycles are
+  written again, as replayed, so the file ends up with what happened without
+  the squashed instructions. gem5 ends without destroying the model, so the
+  state of the last cycle after the last line is not written.
+- **Spike** runs each instruction to its end before the next
+  ([Spike runs one instruction at a time](#spike-runs-one-instruction-at-a-time)):
+  its cycles are that serialized time, and the file says it comes from Spike.
+  Only vcix_uarch models clock on Spike; another model's file is its first
+  line alone.
+- Each instance writes its own file: gem5's units and Spike's harts after the
+  first write `<path>.1`, `<path>.2`, ...
+
+<details><summary>Reproduce</summary>
+
+```
+tests/timeline/run.sh build    # tpuv6e, tpu, copier and print_args, on both simulators
+```
+
+</details>
+
 ## Layout
 
 ```
@@ -1102,6 +1163,8 @@ examples/gem5_se.py       the gem5 fixture the example and the tests run on
 examples/machine_description.py
                           how a gem5 config script reads the machine description
 tools/timing_probe.cc     drives a model's timing face without gem5
+tools/timeline/viewer.html
+                          draws a run's vcix_timeline cycle by cycle, for any model
 tests/run.sh              every test below
 tests/contract/           the rules of the interface: ownership, the machine description,
                           the model table, instances, tick, squash, a late result,
@@ -1115,6 +1178,8 @@ tests/tpuv6e/             the tpuv6e example's timing on gem5; functional/: its 
 tests/tpuv3/              the same, of the tpuv3 example
 tests/stats/              the tpu model's unit statistics in gem5's dumps
 tests/rtl/                the examples/rtl models on both simulators; skipped when not built
+tests/timeline/           the vcix_timeline file on both simulators, against stats.txt and the
+                          models' own traces
 setup/                    the pinned environment: versions.env, the scripts that build it,
                           and the image
 scripts/                  build this repository (build.sh); how each simulator is started

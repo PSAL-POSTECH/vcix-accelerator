@@ -169,6 +169,62 @@ class Port {
   uint64_t reopened_ = 0;
 };
 
+// The file a run writes when its machine description names one, vcix_timeline: <path>, for tools/timeline/viewer.html:
+// a JSON line naming the model's blocks, then one per cycle whose state changed (a squash's replayed cycles again, as
+// they are replayed) and one per issue, commit and squash. Copies of a model share it; the k-th other instance made
+// with the same path in a process (gem5's units, Spike's harts) writes <path>.k.
+class Timeline {
+ public:
+  explicit Timeline(const char *path) {
+    static std::vector<std::pair<std::string, unsigned>> made;
+    unsigned k = 0;
+    for (auto &m : made)
+      if (m.first == path) k = ++m.second;
+    if (!k) made.push_back({path, 0});
+    const std::string name = k ? std::string(path) + "." + std::to_string(k) : std::string(path);
+    file_ = std::fopen(name.c_str(), "w");
+    if (!file_) throw ConfigError("vcix_timeline", name, "cannot be opened for writing");
+    std::setvbuf(file_, nullptr, _IOLBF, 1 << 16);
+  }
+  Timeline(const Timeline &) = delete;
+  Timeline &operator=(const Timeline &) = delete;
+  ~Timeline() { std::fclose(file_); }
+  void line(const std::string &json) { std::fprintf(file_, "%s\n", json.c_str()); }
+  // The blocks' state at the end of `cycle`, members of a JSON object: written when it differs from the last written.
+  void state(Cycle cycle, const std::string &members, bool replayed) {
+    if (!replayed && members == last_) return;
+    last_ = members;
+    line("{\"c\":" + std::to_string(cycle) + (replayed ? ",\"replayed\":1," : ",") + members + "}");
+  }
+  void issue(Cycle cycle, Id id, const char *insn, Cycle latency) {
+    line("{\"e\":\"issue\",\"c\":" + std::to_string(cycle) + ",\"id\":" + std::to_string(id) + ",\"insn\":" + quoted(insn) +
+         ",\"latency\":" + (latency == Unknown ? std::string("null") : std::to_string(latency)) + "}");
+  }
+  void event(const char *what, Cycle cycle, const std::string &members) {
+    line("{\"e\":\"" + std::string(what) + "\",\"c\":" + std::to_string(cycle) + (members.empty() ? "" : ",") + members + "}");
+  }
+  // A count, null when it is unlimited (UINT64_MAX).
+  static std::string number(uint64_t n) { return n == UINT64_MAX ? "null" : std::to_string(n); }
+  static std::string quoted(const char *text) {
+    std::string out = "\"";
+    for (const char *c = text; *c; c++) {
+      if (*c == '"' || *c == '\\') out += '\\';
+      if (static_cast<unsigned char>(*c) >= 0x20) {
+        out += *c;
+      } else {
+        char escaped[7];
+        std::snprintf(escaped, sizeof escaped, "\\u%04x", static_cast<unsigned>(*c));
+        out += escaped;
+      }
+    }
+    return out + "\"";
+  }
+
+ private:
+  FILE *file_;
+  std::string last_;
+};
+
 // Must be copyable with its state in its members. name() and owns() are asked of an object never configured.
 class Model {
  public:
@@ -194,15 +250,37 @@ class Model {
   // Cycles ticked since create, the ticks replayed after a squash included.
   uint64_t cycles() const { return cycles_; }
 
+  // Members of a JSON object for the timeline: the blocks, once, then their state now. By default the ports, and
+  // at each port what it admitted and held so far.
+  virtual std::string timeline_blocks() const {
+    std::string out = "\"ports\":[";
+    for (const Port *p : ports())
+      out += std::string(out.back() == '[' ? "" : ",") + "{\"unit\":" + Timeline::quoted(p->unit()) + ",\"name\":" +
+             Timeline::quoted(p->name()) + ",\"work\":" + Timeline::quoted(p->unit_of_work()) +
+             ",\"capacity\":" + Timeline::number(p->capacity()) + "}";
+    return out + "]";
+  }
+  virtual std::string timeline_state() const {
+    std::string admitted = "\"admitted\":[", held = "\"held\":[";
+    for (const Port *p : ports()) {
+      const char *comma = admitted.back() == '[' ? "" : ",";
+      admitted += comma + std::to_string(p->admitted()), held += comma + std::to_string(p->occupancy());
+    }
+    return admitted + "]," + held + "]";
+  }
+
  protected:
   // True while commit and tick are replayed after a squash: skip what must happen once.
   bool replaying() const { return replaying_; }
+  // The timeline this run writes, or nullptr.
+  Timeline *timeline() const { return timeline_.get(); }
 
  private:
   template <class M>
   friend class Instance;
   bool replaying_ = false;
   uint64_t cycles_ = 0;
+  std::shared_ptr<Timeline> timeline_;
 };
 
 // Copies the model before each issue; a squash puts the copy back and replays the ticks and commits since.
@@ -216,18 +294,35 @@ class Instance {
 
   Instance() : encodings_(model.owns()), committed_(encodings_.size(), 0) {}
 
+  Instance(const Instance &) = delete;
+  Instance &operator=(const Instance &) = delete;
+  ~Instance() {
+    if (model.timeline_ && ticked_ != Unknown) model.timeline_->state(ticked_, model.timeline_state(), false);
+  }
   // Configures the model, then fixes its list of statistics; a port list that breaks the rules throws.
   void configure(const Config &config) {
     model.configure(config);
     describe();
+    if (const char *path = config.get("vcix_timeline")) {
+      model.timeline_ = std::make_shared<Timeline>(path);
+      std::string encodings;
+      for (const Encoding &e : encodings_) encodings += (encodings.empty() ? "" : ",") + Timeline::quoted(e.name);
+      model.timeline_->line("{\"vcix_timeline\":1,\"model\":" + Timeline::quoted(model.name()) + ",\"encodings\":[" +
+                            encodings + "]," + model.timeline_blocks() + "}");
+    }
   }
+  // With a timeline, the state at the end of the cycle ticked before is written first.
   void tick(Cycle now) {
+    if (model.timeline_ && ticked_ != Unknown) model.timeline_->state(ticked_, model.timeline_state(), model.replaying_);
+    ticked_ = now;
     model.cycles_++;
     model.tick(now);
   }
   Cycle issue(const Insn &insn, Id id, Cycle now) {
     issued_.push_back({id, now, model});
-    return model.issue(insn, id, now);
+    const Cycle latency = model.issue(insn, id, now);
+    if (model.timeline_) model.timeline_->issue(now, id, name_of(insn), latency);
+    return latency;
   }
   void commit(const Insn &insn, Id id, Cycle now) {
     for (size_t i = 0; i < encodings_.size(); i++)
@@ -236,6 +331,7 @@ class Instance {
         break;
       }
     model.commit(insn, id, now);
+    if (model.timeline_) model.timeline_->event("commit", now, "\"id\":" + std::to_string(id));
     if (!issued_.empty()) issued_.pop_front();
     while (!commits_.empty() && (issued_.empty() || commits_.front().cycle <= issued_.front().cycle))
       commits_.pop_front();
@@ -247,6 +343,10 @@ class Instance {
     if (from == issued_.end()) return;
     const Cycle issued = from->cycle;
     model = std::move(from->before);
+    if (model.timeline_) {
+      model.timeline_->event("squash", now, "\"from\":" + std::to_string(first) + ",\"since\":" + std::to_string(issued));
+      ticked_ = issued;
+    }
     issued_.erase(from, issued_.end());
     auto commit = commits_.begin();
     while (commit != commits_.end() && commit->cycle <= issued) ++commit;
@@ -314,6 +414,12 @@ class Instance {
  private:
   static constexpr size_t PER_UNIT = 4;
 
+  const char *name_of(const Insn &insn) const {
+    for (const Encoding &e : encodings_)
+      if ((insn.bits & e.mask) == e.match) return e.name;
+    return "?";
+  }
+
   [[noreturn]] static void broken(const char *why) {
     std::fprintf(stderr, "vcix_accel: %s\n", why);
     std::abort();
@@ -378,6 +484,7 @@ class Instance {
   };
   std::deque<Issued> issued_;
   std::deque<Committed> commits_;
+  Cycle ticked_ = Unknown;
 };
 
 // The table of model M. No exception from M crosses the C boundary.
