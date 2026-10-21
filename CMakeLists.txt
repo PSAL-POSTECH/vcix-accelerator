@@ -23,6 +23,9 @@ vcix_accel_add_model(copier examples/copier/copier.cc)
 # examples/tpuv6e and examples/tpuv3 are the tpu example's units, its matrix unit among them, as tpu/<unit>.hpp.
 target_include_directories(tpuv6e PRIVATE examples)
 target_include_directories(tpuv3 PRIVATE examples)
+# examples/fsa: FSA's systolic array of FlashAttention as a vcix_uarch unit; it reuses tpu/machine.hpp's trace.
+vcix_accel_add_model(fsa examples/fsa/fsa.cc)
+target_include_directories(fsa PRIVATE examples)
 vcix_accel_add_model(pipelined tests/pipeline/pipelined.cc)
 
 # examples/rtl: models that are one Verilated unit each, built when Verilator is found (VERILATOR_ROOT, or verilator on
