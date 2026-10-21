@@ -1105,8 +1105,8 @@ A tpuv6e run on gem5 (`tests/tpuv6e/mxu_rate.S`), the first issue:
 The viewer draws, from the first line alone, a bar per instruction from issue
 to done with its commit, and a row per block over cycles: a port's use in the
 cycle against its capacity, a pipeline's rows (per stage on a click) and
-whether it moved, a queue's commands. Clicking a cycle shows every block's
-state then; it plays, zooms, jumps, and can fold runs of cycles in which
+whether it moved, a queue's commands; a click on a unit's name folds its rows.
+Clicking a cycle shows every block's state then; it plays, zooms, jumps, and can fold runs of cycles in which
 nothing happens.
 
 What a timeline is, by simulator:

@@ -100,7 +100,7 @@ const LABEL_W = 250, AXIS_H = 46, LANE_H = 18, ROW_H = 18, GROUP_H = 20, SECTION
 const CPC = [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000, 50000, 100000];
 const scroller = $('scroller'), cv = $('cv'), tip = $('tip');
 let T = null, cols = null, layout = null, C = null, raf = 0, panelRaf = 0, playTimer = 0;
-const V = { cpc: 1, colW: 16, collapse: false, minRun: 8, cursor: null, expanded: new Set() };
+const V = { cpc: 1, colW: 16, collapse: false, minRun: 8, cursor: null, expanded: new Set(), folded: new Set() };
 
 function esc(s) { return String(s).replace(/[&<>"]/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[ch]); }
 function lowerBound(a, x) { let lo = 0, hi = a.length; while (lo < hi) { const m = (lo + hi) >> 1; if (a[m] < x) lo = m + 1; else hi = m; } return lo; }
@@ -341,14 +341,16 @@ function levelAgg(arr, max, color, name, extra) {
   };
 }
 
-// Builds the rows from the schema: per port its use; per pipeline input, stage rows (expandable), output and motion;
-// per queue its commands and the head command's step.
+// Builds the rows from the schema: per unit a header that folds its rows; per port its use; per pipeline input, stage
+// rows (expandable), output and motion; per queue its commands and the head command's step.
 function buildRows() {
   const { S, D, M } = T, out = [];
   out.push({ kind: 'section', label: 'instructions', title: 'One bar per id from issue to done (issue + latency, or the first cycle it is in "ready"), a diamond at its commit, grey struck-through when squashed. Below one pixel per cycle, a column shows the share of its cycles the lane was in flight.', h: SECTION_H });
   out.push({ kind: 'lanes', h: Math.max(1, T.lanes.length) * LANE_H });
   for (const U of S.units) {
-    out.push({ kind: 'group', label: U.name, h: GROUP_H });
+    const ui = S.units.indexOf(U), folded = V.folded.has(ui);
+    out.push({ kind: 'group', label: `${folded ? '▸' : '▾'} ${U.name}`, fold: ui, h: GROUP_H });
+    if (folded) continue;
     for (const P of U.ports) {
       const cap = P.cap, name = `${U.name} · port ${P.name}`;
       out.push({ kind: 'row', label: `port ${P.name}`, title: `${name} — ${P.work}, capacity ${cap ?? 'unlimited'}`, key: `port:${P.f}`, h: ROW_H,
@@ -792,7 +794,7 @@ async function loadFile(file) {
     const text = await file.text();
     const t = parse(text);
     t.name = file.name; t.ms = performance.now() - t0;
-    T = t; V.expanded.clear(); V.cursor = null;
+    T = t; V.expanded.clear(); V.folded.clear(); V.cursor = null;
     readColors(); cols = buildCols(); layoutAll();
     scroller.scrollLeft = 0; scroller.scrollTop = 0;
     $('drop').className = 'hidden';
@@ -839,6 +841,10 @@ scroller.addEventListener('mouseleave', () => { tip.style.display = 'none'; });
 scroller.addEventListener('click', e => {
   const h = hit(e);
   if (!h) return;
+  if (h.area === 'label' && h.row && h.row.fold !== undefined) {
+    if (V.folded.has(h.row.fold)) V.folded.delete(h.row.fold); else V.folded.add(h.row.fold);
+    layoutAll(); redraw(); return;
+  }
   if (h.area === 'label' && h.row && h.row.toggle !== undefined) {
     if (V.expanded.has(h.row.toggle)) V.expanded.delete(h.row.toggle); else V.expanded.add(h.row.toggle);
     layoutAll(); redraw(); return;
