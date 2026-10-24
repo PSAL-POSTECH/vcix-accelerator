@@ -557,6 +557,13 @@ void cycle(cp::Cycle now) override {                               // copier.cc:
 "new" 열은 [도출]입니다. 일회용 드라이버가 낸 값이고, 그 드라이버는 오늘 코드에 대해 "old" 열을 그대로 재현합니다 [사실]
 `verify/pins.py`, `verify/xpins.py`. gem5에서 돌린 값은 아닙니다.
 
+**구현 후 결과 (2026-10-25, PR #61):** 아래 표의 "new" 값으로 `tests/tpu`, `tests/tpuv3`, `tests/tpuv6e`의 고정값을 다시 정했고, gem5 실측은 모든
+줄에서 도출값과 같았습니다. 다른 곳은 둘인데, 둘 다 드라이버 쪽 가정의 차이였습니다: tpuv6e `mxu_pops`는 `.balign 64` 뒤의 fetch 간격 때문에 두
+vmatmul이 앞선 명령 없이 함께 실행되어 vpop commit이 21·22가 아니라 20·21이고, tpuv6e `mxu_slots-script`(폭 12)는 "비운 칸은 t+1에 빈다"
+규칙으로 세 번째 사이클에 vmatmul 하나만 들어가지만 모든 명령의 실행 사이클은 gem5_se와 같습니다. `ports.cc`의 `continuous`는 push 6개를 앞서
+보내는 프로그램 순서로 3998/4000(0.9995)입니다. 전체 테스트 243개가 통과합니다. 설계 코드 사본(`examples/`, 헤더)은 구현이 들어온 뒤 이 디렉터리에서
+지웠습니다. 실제 코드는 `include/vcix_cp.hpp`, `include/vcix_cp_base.hpp`, `examples/`에 있습니다.
+
 ### 5.1 프레임워크
 
 | test | old | new (derived) | why |
